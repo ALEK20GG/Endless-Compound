@@ -1,0 +1,3 @@
+host:           free-hosting.org
+server ip:      185.27.134.137
+server pw:      penegamerk20
