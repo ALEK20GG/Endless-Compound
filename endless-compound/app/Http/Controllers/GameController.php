@@ -19,9 +19,7 @@ class GameController extends Controller
         // Esempio di lettura stato board da sessione
         $boardState = Session::get('board_state', []);
 
-        return view('game', [
-            'boardState' => $boardState,
-        ]);
+        return view('game', compact('boardState'));
     }
 
     /**

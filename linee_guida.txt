@@ -1,0 +1,27 @@
+Controllo e sanificazione input : Html5, JS, PHP (filter_var,...)
+Front end responsive
+
+Tecnica PostBack: account (alternativa a login con google api)
+(https://www.docsity.com/it/docs/linguaggio-php-il-postback/9458752/)
+
+SESSIONI: coordinate oggetti sulla board in cui si gioca
+
+Uso dei cookie: personalizzazioni varie, accesso già salvato
+
+Uso delle prepared statement per interrogazione DB
+
+Uso delle transazioni per l'accesso condiviso al DB
+Uso delle  select ... LOCK IN SHARE MODE o FOR UPDATE per accesso condiviso
+
+Uso di ajax o di websocket: personal discovery, update nella barra laterale degli oggetti
+
+DB: ER (tabelle e relazioni da fare su carta)
+
+Tecnologie per invio email, pagamenti (da decidere in futuro)
+
+Certificazione a più fattori (php ed email, oauth,...): login google
+
+Pattern M(odel)V(iew)C(ontroller)
+
+Uso di API: (stripe per simulazione pagamenti?), api google autenticazione, api LLaMA per generazione combinazioni
+
