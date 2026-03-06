@@ -33,9 +33,9 @@ services:
           property: connectionString
 
 databases:
-  - name: infinite-craft-db
+  - name: endless-compound-db
     plan: free
-    databaseName: infinitecraft
+    databaseName: endless-compound
 ```
 
 ---
