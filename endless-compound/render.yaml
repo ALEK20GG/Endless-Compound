@@ -36,15 +36,3 @@ databases:
   - name: endless-compound-db
     plan: free
     databaseName: endless-compound
-```
-
----
-
-### 3. Configura su Render Dashboard
-
-#1. Vai su [render.com](https://render.com) → **New → Blueprint** → collega il tuo repo GitHub
-#2. Render leggerà il `render.yaml` automaticamente e creerà tutto
-# 3. Vai su **Environment** del tuo Web Service e aggiungi manualmente le variabili segrete:
-```
-#APP_KEY        → (generato auto dal render.yaml)
-#YOUR_AI_API_KEY → la tua chiave API custom
