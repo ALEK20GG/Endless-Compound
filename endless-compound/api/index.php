@@ -1,6 +1,3 @@
 <?php
-
-// Imposta la root pubblica
-$_SERVER['DOCUMENT_ROOT'] = __DIR__ . '/../public';
-
+// api/index.php
 require __DIR__ . '/../public/index.php';

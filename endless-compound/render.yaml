@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: infinite-craft
+    runtime: php
+    plan: free
+    buildCommand: |
+      composer install --optimize-autoloader --no-dev
+      php artisan config:cache
+      php artisan route:cache
+      php artisan view:cache
+      php artisan migrate --force
+    startCommand: php artisan serve --host=0.0.0.0 --port=$PORT
+    envVars:
+      - key: APP_NAME
+        value: InfiniteCraft
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: APP_KEY
+        generateValue: true
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: SESSION_DRIVER
+        value: cookie
+      - key: CACHE_DRIVER
+        value: array
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DATABASE_URL
+        fromDatabase:
+          name: infinite-craft-db
+          property: connectionString
+
+databases:
+  - name: infinite-craft-db
+    plan: free
+    databaseName: infinitecraft
+```
+
+---
+
+### 3. Configura su Render Dashboard
+
+1. Vai su [render.com](https://render.com) → **New → Blueprint** → collega il tuo repo GitHub
+2. Render leggerà il `render.yaml` automaticamente e creerà tutto
+3. Vai su **Environment** del tuo Web Service e aggiungi manualmente le variabili segrete:
+```
+APP_KEY        → (generato auto dal render.yaml)
+YOUR_AI_API_KEY → la tua chiave API custom
