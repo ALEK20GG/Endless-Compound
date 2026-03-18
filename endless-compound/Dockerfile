@@ -24,8 +24,7 @@ COPY . .
 RUN composer install --optimize-autoloader --no-dev
 
 # Installa dipendenze JS e builda gli asset Vite
-RUN npm ci || npm install \
-    && npm run build
+RUN (npm ci || npm install) && npm run build
 
 # Configura Apache per Laravel
 RUN sed -i 's|/var/www/html|/var/www/html/public|g' /etc/apache2/sites-available/000-default.conf \
