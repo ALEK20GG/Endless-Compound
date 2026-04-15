@@ -31,7 +31,7 @@ return [
 
     'connections' => [
 
-        // Supabase is just Postgres; Render provides a `DATABASE_URL`.
+        // Supabase connection (PostgreSQL)
         'supabase' => [
             'driver' => 'pgsql',
             'url' => env('DB_URL') ?: env('DATABASE_URL'),
@@ -42,11 +42,7 @@ return [
             'password' => env('DB_PASSWORD', ''),
             'charset' => env('DB_CHARSET', 'utf8'),
             'prefix' => '',
-            'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
-            'busy_timeout' => null,
-            'journal_mode' => null,
-            'synchronous' => null,
-            'transaction_mode' => 'DEFERRED',
+            'prefix_indexes' => true,
             'search_path' => env('DB_SEARCH_PATH', 'public'),
             'sslmode' => env('DB_SSLMODE', 'require'),
         ],
