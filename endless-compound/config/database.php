@@ -31,7 +31,7 @@ return [
 
     'connections' => [
 
-        // Supabase connection (PostgreSQL)
+        // Supabase — PostgreSQL hosted on supabase.co
         'supabase' => [
             'driver' => 'pgsql',
             'url' => env('DB_URL') ?: env('DATABASE_URL'),
