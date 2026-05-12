@@ -4,22 +4,24 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Session;
+use App\Models\Room;
 
 class GameController extends Controller
 {
     /**
      * Pagina principale di gioco (UI).
      *
-     * Qui potete:
-     * - mostrare la board
-     * - fare il rendering iniziale degli oggetti dalla sessione / DB
+     * Legge le rooms dal DB Supabase (PostgreSQL) e le passa alla view.
      */
     public function index(Request $request)
     {
-        // Esempio di lettura stato board da sessione
+        // Lettura stato board da sessione
         $boardState = Session::get('board_state', []);
 
-        return view('game', compact('boardState'));
+        // SELECT * FROM rooms ORDER BY createdat DESC
+        $rooms = Room::orderBy('createdat', 'desc')->get();
+
+        return view('game', compact('boardState', 'rooms'));
     }
 
     /**

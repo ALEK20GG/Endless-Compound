@@ -1,24 +1,49 @@
-*.log
-.DS_Store
+# ── Dipendenze ────────────────────────────────────────────────
+/vendor/
+/node_modules/
+
+# ── Build assets (Vite) ───────────────────────────────────────
+/public/build/
+/public/hot
+/public/storage
+
+# ── Ambiente e segreti ────────────────────────────────────────
 .env
-.env.backup
-.env.production
-.phpactor.json
+.env.*
+!.env.example
+/auth.json
+/storage/*.key
+
+# ── Cache e file generati da Laravel ─────────────────────────
+/bootstrap/cache/*.php
+/storage/framework/cache/
+/storage/framework/sessions/
+/storage/framework/views/
+/storage/pail/
+
+# ── Log ───────────────────────────────────────────────────────
+*.log
+/storage/logs/
+
+# ── Test ──────────────────────────────────────────────────────
 .phpunit.result.cache
+/.phpunit.cache
+/coverage/
+
+# ── IDE e OS ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
 /.fleet
 /.idea
 /.nova
-/.phpunit.cache
 /.vscode
 /.zed
-/auth.json
-/node_modules
-/public/build
-/public/hot
-/public/storage
-/storage/*.key
-/storage/pail
-/vendor
+.phpactor.json
+
+# ── Laravel Homestead (non usato ma standard) ─────────────────
 Homestead.json
 Homestead.yaml
-Thumbs.db
+
+#  File da non committare
+supabaseConfig.js

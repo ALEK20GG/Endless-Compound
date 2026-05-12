@@ -2,47 +2,54 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
 class User extends Authenticatable
 {
-    /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var list<string>
-     */
+    // Tabella Supabase
+    protected $table = 'users';
+
+    // Chiave primaria custom
+    protected $primaryKey = 'uid';
+
+    // Supabase non usa created_at/updated_at standard
+    public $timestamps = false;
+
     protected $fillable = [
-        'name',
+        'username',
         'email',
         'password',
     ];
 
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var list<string>
-     */
     protected $hidden = [
         'password',
         'remember_token',
     ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     protected function casts(): array
     {
         return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
+            'createdat' => 'datetime',
+            'lastlogin' => 'datetime',
+            'password'  => 'hashed',
         ];
+    }
+
+    /**
+     * Laravel Auth usa 'name' in molti posti (navbar, ecc.)
+     * Lo mappiamo su 'username' tramite accessor.
+     */
+    public function getNameAttribute(): string
+    {
+        return $this->username ?? '';
+    }
+
+    public function setNameAttribute(string $value): void
+    {
+        $this->username = $value;
     }
 }

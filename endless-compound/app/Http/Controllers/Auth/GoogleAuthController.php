@@ -38,16 +38,16 @@ class GoogleAuthController extends Controller
                 Auth::login($user);
             } else {
                 $user = User::create([
-                    'name'              => $googleUser->getName(),
-                    'email'             => $googleUser->getEmail(),
-                    'password'          => Hash::make(uniqid()),
-                    'email_verified_at' => now(),
+                    'username'  => $googleUser->getName(),
+                    'email'     => $googleUser->getEmail(),
+                    'password'  => Hash::make(uniqid()),
+                    'createdat' => now(),
                 ]);
 
                 Auth::login($user);
             }
 
-            return redirect()->intended('/dashboard');
+            return redirect()->intended(route('game.index'));
 
         } catch (\Exception $e) {
             return redirect('/login')->withErrors([
