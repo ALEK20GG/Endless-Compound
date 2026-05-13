@@ -26,8 +26,8 @@ Route::get('/auth/google/callback', [GoogleAuthController::class, 'handleGoogleC
 
 require __DIR__.'/auth.php';
 
-// ── DB Check (solo in locale — rimuovere prima del deploy) ────────────────
-if (app()->environment('local')) {
+// ── DB Check ─────────────────────────────────────────────────────────────
+if (app()->environment('local', 'production')) {
     Route::get('/dbcheck', function () {
         $results = [];
 
