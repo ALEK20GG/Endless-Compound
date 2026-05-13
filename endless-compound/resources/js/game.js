@@ -1,84 +1,329 @@
 /**
- * Logica frontend principale per Endless Compound / Infinite Craft-like.
+ * Endless Compound — logica frontend
  *
- * Linee guida collegate:
- * - Controllo e sanificazione input (HTML5 + JS)
- * - Front end responsive (usa Tailwind)
- * - Uso di AJAX (fetch) o WebSocket per aggiornare la board
- * - Gestione di cookie / preferenze utente in JS
+ * Funzionalità:
+ * - Board con elementi trascinabili (drag & drop nativo)
+ * - Sidebar con tutti gli elementi scoperti (aggiornata via AJAX)
+ * - Combinazione per sovrapposizione (drop su un altro elemento)
+ * - Toast notifiche
+ * - Ricerca nella sidebar
  */
 
-function initGame() {
-    const root = document.getElementById('game-root');
-    if (!root) return;
+// ── Stato globale ────────────────────────────────────────────────
+const state = {
+    /** @type {Map<string, {id: string, name: string, emoji: string, el: HTMLElement}>} */
+    boardItems: new Map(),
 
-    const initialBoard = safeParseJson(root.dataset.initialBoard) ?? [];
-    const combineUrl = root.dataset.combineUrl;
-    const saveBoardUrl = root.dataset.saveBoardUrl;
+    /** @type {Set<string>} nomi degli elementi scoperti */
+    discovered: new Set(),
 
-    // TODO: qui creare la board, la sidebar, gli input HTML5, ecc.
-    console.log('Initial board from session/PHP:', initialBoard);
+    combineUrl:  '',
+    elementsUrl: '',
 
-    // Esempio di handler per una combinazione (da collegare a UI reali)
-    async function combine(source, target) {
-        // Sanificazione base lato client
-        source = sanitizeText(source);
-        target = sanitizeText(target);
+    /** id univoco per gli item sulla board */
+    nextId: 1,
+};
 
-        const response = await fetch(combineUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Requested-With': 'XMLHttpRequest',
-                'X-CSRF-TOKEN': getCsrfToken(),
-            },
-            body: JSON.stringify({ source, target }),
-        });
+// ── Init ─────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    const board = document.getElementById('board');
+    if (!board) return;
 
-        const data = await response.json();
-        console.log('Combine result:', data);
+    state.combineUrl  = board.dataset.combineUrl;
+    state.elementsUrl = board.dataset.elementsUrl;
 
-        // TODO: aggiornare DOM board con data.boardState e data.result
+    // Carica elementi base dal PHP inline
+    const baseElements = safeParseJson(board.dataset.baseElements) ?? [];
+    baseElements.forEach(el => state.discovered.add(el.name));
+
+    // Carica tutti gli elementi dal DB (sidebar)
+    loadElements();
+
+    // Drag & drop sulla board
+    initBoardDrop(board);
+});
+
+// ── Caricamento elementi (sidebar) ───────────────────────────────
+async function loadElements() {
+    try {
+        const res  = await apiFetch(state.elementsUrl, 'GET');
+        const data = await res.json();
+
+        if (data.success) {
+            renderSidebar(data.elements);
+        }
+    } catch (e) {
+        console.error('loadElements error:', e);
     }
+}
 
-    // Espone funzioni per debug iniziale
-    window.EndlessCompound = {
-        combine,
-        saveBoard: async (board) => {
-            const response = await fetch(saveBoardUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'X-CSRF-TOKEN': getCsrfToken(),
-                },
-                body: JSON.stringify({ board }),
+function renderSidebar(elements) {
+    const list  = document.getElementById('element-list');
+    const count = document.getElementById('element-count');
+    if (!list) return;
+
+    list.innerHTML = '';
+    count.textContent = elements.length;
+
+    elements.forEach(el => {
+        state.discovered.add(el.name);
+        list.appendChild(makeSidebarItem(el));
+    });
+
+    // Ricerca
+    const search = document.getElementById('sidebar-search');
+    if (search) {
+        search.addEventListener('input', () => {
+            const q = search.value.toLowerCase();
+            list.querySelectorAll('.sidebar-item').forEach(item => {
+                item.style.display = item.dataset.name.toLowerCase().includes(q) ? '' : 'none';
             });
-            return await response.json();
+        });
+    }
+}
+
+function makeSidebarItem(el) {
+    const li = document.createElement('li');
+    li.className = 'sidebar-item';
+    li.dataset.name = el.name;
+    li.draggable = true;
+    li.innerHTML = `<span class="item-emoji">${sanitize(el.emoji ?? '✨')}</span>
+                    <span>${sanitize(el.name)}</span>`;
+
+    // Drag dalla sidebar → board
+    li.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('application/x-element', JSON.stringify({
+            name:  el.name,
+            emoji: el.emoji ?? '✨',
+            from:  'sidebar',
+        }));
+        e.dataTransfer.effectAllowed = 'copy';
+    });
+
+    return li;
+}
+
+// ── Board drop ───────────────────────────────────────────────────
+function initBoardDrop(board) {
+    board.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    });
+
+    board.addEventListener('drop', e => {
+        e.preventDefault();
+
+        const raw = e.dataTransfer.getData('application/x-element');
+        if (!raw) return;
+
+        const payload = safeParseJson(raw);
+        if (!payload) return;
+
+        const boardRect = board.getBoundingClientRect();
+        const x = e.clientX - boardRect.left;
+        const y = e.clientY - boardRect.top;
+
+        if (payload.from === 'sidebar') {
+            // Spawn nuovo item sulla board
+            spawnBoardItem(payload.name, payload.emoji, x, y);
+        } else if (payload.from === 'board') {
+            // Sposta item esistente
+            const item = state.boardItems.get(payload.id);
+            if (item) {
+                item.el.style.left = `${x - 40}px`;
+                item.el.style.top  = `${y - 18}px`;
+            }
+        }
+    });
+}
+
+// ── Item sulla board ─────────────────────────────────────────────
+function spawnBoardItem(name, emoji, x, y, animate = true) {
+    const id  = `item-${state.nextId++}`;
+    const el  = document.createElement('div');
+    el.className   = 'board-item' + (animate ? ' spawning' : '');
+    el.id          = id;
+    el.draggable   = true;
+    el.style.left  = `${x - 40}px`;
+    el.style.top   = `${y - 18}px`;
+    el.innerHTML   = `<span class="item-emoji">${sanitize(emoji)}</span>
+                      <span>${sanitize(name)}</span>`;
+
+    // Drag dell'item sulla board
+    let dragOffsetX = 0, dragOffsetY = 0;
+
+    el.addEventListener('dragstart', e => {
+        const rect = el.getBoundingClientRect();
+        dragOffsetX = e.clientX - rect.left;
+        dragOffsetY = e.clientY - rect.top;
+
+        e.dataTransfer.setData('application/x-element', JSON.stringify({
+            name, emoji, from: 'board', id,
+        }));
+        e.dataTransfer.effectAllowed = 'move';
+        el.classList.add('dragging');
+    });
+
+    el.addEventListener('dragend', () => el.classList.remove('dragging'));
+
+    // Drop su un altro item → combina
+    el.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
+    });
+
+    el.addEventListener('drop', async e => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const raw = e.dataTransfer.getData('application/x-element');
+        if (!raw) return;
+
+        const payload = safeParseJson(raw);
+        if (!payload || payload.id === id) return;
+
+        // Rimuovi l'item trascinato dalla board
+        if (payload.from === 'board') {
+            removeBoardItem(payload.id);
+        }
+
+        // Posizione del target per far apparire il risultato
+        const rect = el.getBoundingClientRect();
+        const board = document.getElementById('board');
+        const boardRect = board.getBoundingClientRect();
+        const cx = rect.left - boardRect.left + rect.width / 2;
+        const cy = rect.top  - boardRect.top  + rect.height / 2;
+
+        // Animazione merge
+        el.classList.add('merging');
+        setTimeout(() => el.classList.remove('merging'), 400);
+
+        await doCombine(name, payload.name, cx, cy, id);
+    });
+
+    // Doppio click → rimuovi dalla board
+    el.addEventListener('dblclick', () => removeBoardItem(id));
+
+    const board = document.getElementById('board');
+    board.appendChild(el);
+
+    state.boardItems.set(id, { id, name, emoji, el });
+    updateBoardHint();
+
+    return id;
+}
+
+function removeBoardItem(id) {
+    const item = state.boardItems.get(id);
+    if (item) {
+        item.el.remove();
+        state.boardItems.delete(id);
+        updateBoardHint();
+    }
+}
+
+function updateBoardHint() {
+    const hint = document.getElementById('board-hint');
+    if (hint) hint.style.display = state.boardItems.size > 0 ? 'none' : '';
+}
+
+// ── Combinazione ─────────────────────────────────────────────────
+async function doCombine(nameA, nameB, x, y, targetId) {
+    showToast(`⚗️ Combinando ${nameA} + ${nameB}…`, 'info');
+
+    try {
+        const res  = await apiFetch(state.combineUrl, 'POST', {
+            element_a: nameA,
+            element_b: nameB,
+        });
+        const data = await res.json();
+
+        if (!data.success) {
+            showToast(data.message ?? 'Errore nella combinazione', 'error');
+            return;
+        }
+
+        const result = data.result;
+
+        // Rimuovi il target dalla board
+        removeBoardItem(targetId);
+
+        // Spawna il risultato
+        spawnBoardItem(result.name, result.emoji, x, y);
+
+        // Aggiorna sidebar se è un elemento nuovo
+        if (data.is_new && !state.discovered.has(result.name)) {
+            state.discovered.add(result.name);
+            addToSidebar(result);
+
+            if (data.first_discovery) {
+                showToast(`🏆 Prima scoperta mondiale: ${result.emoji} ${result.name}!`, 'first');
+            } else {
+                showToast(`✨ Nuovo elemento: ${result.emoji} ${result.name}`, 'success');
+            }
+        } else {
+            showToast(`${result.emoji} ${result.name}`, 'success');
+        }
+
+    } catch (e) {
+        console.error('doCombine error:', e);
+        showToast('Errore di rete. Riprova.', 'error');
+    }
+}
+
+function addToSidebar(el) {
+    const list  = document.getElementById('element-list');
+    const count = document.getElementById('element-count');
+    if (!list) return;
+
+    list.appendChild(makeSidebarItem(el));
+
+    // Aggiorna contatore
+    const current = parseInt(count.textContent ?? '0', 10);
+    count.textContent = current + 1;
+}
+
+// ── Toast ─────────────────────────────────────────────────────────
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// ── Utility ──────────────────────────────────────────────────────
+async function apiFetch(url, method = 'GET', body = null) {
+    const opts = {
+        method,
+        headers: {
+            'Content-Type':     'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRF-TOKEN':     getCsrfToken(),
         },
     };
-}
-
-function safeParseJson(value) {
-    try {
-        return JSON.parse(value ?? 'null');
-    } catch {
-        return null;
-    }
-}
-
-function sanitizeText(value) {
-    // Semplice sanificazione lato client; lato server ci sono anche le validate() di Laravel
-    return String(value ?? '')
-        .trim()
-        .slice(0, 255);
+    if (body) opts.body = JSON.stringify(body);
+    return fetch(url, opts);
 }
 
 function getCsrfToken() {
-    const meta = document.querySelector('meta[name="csrf-token"]');
-    return meta ? meta.getAttribute('content') : '';
+    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? '';
 }
 
-document.addEventListener('DOMContentLoaded', initGame);
+function safeParseJson(value) {
+    try { return JSON.parse(value ?? 'null'); } catch { return null; }
+}
 
-
+/** Escaping base per prevenire XSS nel DOM */
+function sanitize(str) {
+    return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}

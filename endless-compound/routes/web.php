@@ -18,7 +18,7 @@ Route::view('profile', 'profile')
 
 // Endpoints AJAX per il gioco
 Route::post('/game/combine', [GameController::class, 'combine'])->name('game.combine');
-Route::post('/game/save-board', [GameController::class, 'saveBoard'])->name('game.saveBoard');
+Route::get('/game/elements', [GameController::class, 'elements'])->name('game.elements');
 
 // Google OAuth — definite QUI così la route 'auth.google' esiste sempre
 Route::get('/auth/google', [GoogleAuthController::class, 'redirectToGoogle'])->name('auth.google');

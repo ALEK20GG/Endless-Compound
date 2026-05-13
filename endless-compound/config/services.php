@@ -45,8 +45,9 @@ return [
     |
     */
     'llama' => [
-        'endpoint' => env('LLAMA_ENDPOINT'),
-        'key' => env('LLAMA_API_KEY'),
+        'endpoint' => env('LLAMA_ENDPOINT', 'https://openrouter.ai/api/v1/chat/completions'),
+        'key'      => env('LLAMA_API_KEY'),
+        'model'    => env('LLAMA_MODEL', 'meta-llama/llama-3.3-70b-instruct:free'),
     ],
 
 ];

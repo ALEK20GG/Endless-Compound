@@ -1,0 +1,123 @@
+/* ── Elementi sulla board ─────────────────────────────────────── */
+.board-item {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 9999px;
+    cursor: grab;
+    user-select: none;
+    white-space: nowrap;
+    font-size: 0.875rem;
+    color: #e2e8f0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    transition: border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
+    z-index: 10;
+}
+
+.board-item:hover {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 2px rgba(99,102,241,0.3);
+}
+
+.board-item.dragging {
+    cursor: grabbing;
+    opacity: 0.85;
+    z-index: 100;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+}
+
+.board-item.merging {
+    animation: merge-pulse 0.4s ease-out;
+}
+
+.board-item .item-emoji {
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+/* ── Sidebar elementi ─────────────────────────────────────────── */
+.sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    cursor: grab;
+    font-size: 0.8125rem;
+    color: #cbd5e1;
+    transition: background 0.1s;
+}
+
+.sidebar-item:hover {
+    background: #1e293b;
+}
+
+.sidebar-item .item-emoji {
+    font-size: 1rem;
+    width: 20px;
+    text-align: center;
+}
+
+/* ── Toast ────────────────────────────────────────────────────── */
+.toast {
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    opacity: 0;
+    transform: translateY(-8px);
+    animation: toast-in 0.25s ease forwards, toast-out 0.25s ease 2.5s forwards;
+    pointer-events: none;
+}
+
+.toast-success {
+    background: #166534;
+    color: #bbf7d0;
+    border: 1px solid #15803d;
+}
+
+.toast-error {
+    background: #7f1d1d;
+    color: #fecaca;
+    border: 1px solid #991b1b;
+}
+
+.toast-info {
+    background: #1e3a5f;
+    color: #bfdbfe;
+    border: 1px solid #1d4ed8;
+}
+
+.toast-first {
+    background: #713f12;
+    color: #fef08a;
+    border: 1px solid #a16207;
+}
+
+/* ── Animazioni ───────────────────────────────────────────────── */
+@keyframes merge-pulse {
+    0%   { transform: scale(1); }
+    50%  { transform: scale(1.15); box-shadow: 0 0 20px rgba(99,102,241,0.6); }
+    100% { transform: scale(1); }
+}
+
+@keyframes toast-in {
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toast-out {
+    to { opacity: 0; transform: translateY(-8px); }
+}
+
+@keyframes spawn-in {
+    from { opacity: 0; transform: scale(0.7); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+.board-item.spawning {
+    animation: spawn-in 0.2s ease-out;
+}
