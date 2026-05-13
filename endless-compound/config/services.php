@@ -39,10 +39,6 @@ return [
     |--------------------------------------------------------------------------
     | LLaMA / LLM per combinazioni di gioco
     |--------------------------------------------------------------------------
-    |
-    | Configurazione per il modello che userete per generare combinazioni
-    | (es. LLaMA, API compatibili, ecc.). Le chiavi reali stanno in .env.
-    |
     */
     'llama' => [
         'endpoint' => env('LLAMA_ENDPOINT', 'https://openrouter.ai/api/v1/chat/completions'),

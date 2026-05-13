@@ -86,20 +86,20 @@ class LlamaCombinationService
     private function systemPrompt(): string
     {
         return <<<'PROMPT'
-Sei il motore di un gioco di combinazione di elementi in stile "Infinite Craft".
-Il tuo compito è combinare due elementi e produrre un nuovo elemento risultante.
+Combine the provided compounds and produce a new element.
+The rules are:
+- the format must be "emoji string" for example "💨 Steam"
+- there must be only one emoji in the answer
+- the name must be in english and as concise as possible
+- the name must be as explicit as possible so the user understands what is the element about
+- dont add explainations or extra texts and punctuation just respond with the information i described in format
+- if the combound doesn't makes sense or it is meaningless, be creative and at least try to give an answer
+- the response must exist in the format given
 
-Regole:
-- Rispondi SOLO con una riga nel formato esatto: EMOJI Nome
-- L'emoji deve essere una singola emoji pertinente al risultato
-- Il nome deve essere in italiano, breve (1-3 parole), creativo ma sensato
-- Non aggiungere spiegazioni, punteggiatura extra o testo aggiuntivo
-- Se la combinazione non ha senso, inventa comunque qualcosa di creativo
-
-Esempi:
-Acqua + Fuoco → 💨 Vapore
-Terra + Acqua → 🌱 Fango
-Fuoco + Aria → 🌪️ Fiamma Viva
+Examples:
+Water + Fire → 💨 Steam
+Earth + Water → 🌱 Mud
+Fire + Earth → 🌋 Lava
 PROMPT;
     }
 
