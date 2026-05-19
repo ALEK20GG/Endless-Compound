@@ -28,6 +28,12 @@ require __DIR__.'/auth.php';
 
 // ── DB Check ─────────────────────────────────────────────────────────────
 if (app()->environment('local', 'production')) {
+    Route::get('/phpinfo', function () {
+        return response('<pre>max_execution_time: ' . ini_get('max_execution_time') . "\n"
+            . 'php_ini: ' . php_ini_loaded_file() . "\n"
+            . 'php_version: ' . PHP_VERSION . '</pre>');
+    });
+
     Route::get('/dbcheck', function () {
         $results = [];
 

@@ -6,9 +6,6 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\Models\Compound;
-use App\Models\Recipe;
-use App\Models\Room;
 use App\Services\LlamaCombinationService;
 
 class GameController extends Controller
@@ -21,10 +18,11 @@ class GameController extends Controller
 
     public function index(Request $request)
     {
-        $rooms = Room::orderBy('createdat', 'desc')->get();
+        $rooms = DB::table('rooms')->orderBy('createdat', 'desc')->get();
 
-        // Elementi base sempre disponibili
-        $baseElements = Compound::whereNull('first_discoverer_uid')
+        // Base elements: compounds with no discoverer (seeded)
+        $baseElements = DB::table('compounds')
+            ->whereNull('first_discoverer_uid')
             ->orderBy('cid')
             ->get(['cid', 'name', 'emoji']);
 
@@ -56,25 +54,38 @@ class GameController extends Controller
         $nameA = trim(strip_tags($data['element_a']));
         $nameB = trim(strip_tags($data['element_b']));
 
-        // 2. Risolvi compound dal DB
-        $compoundA = Compound::findByName($nameA);
-        $compoundB = Compound::findByName($nameB);
+        // 2. Risolvi compound dal DB (DB::table diretto, come dbcheck)
+        $compoundA = DB::table('compounds')
+            ->whereRaw('LOWER(name) = ?', [strtolower($nameA)])
+            ->first();
+
+        $compoundB = DB::table('compounds')
+            ->whereRaw('LOWER(name) = ?', [strtolower($nameB)])
+            ->first();
 
         if (! $compoundA || ! $compoundB) {
             return response()->json([
                 'success' => false,
-                'message' => 'Elemento non trovato: ' . (! $compoundA ? $nameA : $nameB),
+                'message' => 'Element not found: ' . (! $compoundA ? $nameA : $nameB),
             ], 422);
         }
 
         // 3. Cerca ricetta esistente
-        $recipe = Recipe::findByIngredients($compoundA->cid, $compoundB->cid);
+        [$cidA, $cidB] = $compoundA->cid <= $compoundB->cid
+            ? [$compoundA->cid, $compoundB->cid]
+            : [$compoundB->cid, $compoundA->cid];
+
+        $recipe = DB::table('recipes')
+            ->where('cid_a', $cidA)
+            ->where('cid_b', $cidB)
+            ->first();
 
         if ($recipe) {
+            $result = DB::table('compounds')->where('cid', $recipe->cid_result)->first();
             return response()->json([
-                'success'      => true,
-                'result'       => $this->formatCompound($recipe->result),
-                'is_new'       => false,
+                'success'         => true,
+                'result'          => $this->formatRow($result),
+                'is_new'          => false,
                 'first_discovery' => false,
             ]);
         }
@@ -85,62 +96,64 @@ class GameController extends Controller
         if (! $generated) {
             return response()->json([
                 'success' => false,
-                'message' => 'Impossibile generare la combinazione al momento. Riprova.',
+                'message' => 'Unable to generate combination right now. Please try again.',
             ], 503);
         }
 
         // 5. Salva in transazione
         try {
-            $result = DB::transaction(function () use ($compoundA, $compoundB, $generated, $request) {
-                // Controlla se il compound esiste già (potrebbe essere stato creato
-                // da un'altra richiesta concorrente nel frattempo)
-                $existing = Compound::findByName($generated['name']);
+            $result = DB::transaction(function () use ($cidA, $cidB, $generated) {
+                // Controlla se il compound esiste già
+                $existing = DB::table('compounds')
+                    ->whereRaw('LOWER(name) = ?', [strtolower($generated['name'])])
+                    ->first();
 
                 $isFirstDiscovery = false;
 
                 if ($existing) {
                     $resultCompound = $existing;
                 } else {
-                    // Nuovo compound — registra chi l'ha scoperto per primo
-                    $resultCompound = Compound::create([
+                    $newCid = DB::table('compounds')->insertGetId([
                         'name'                 => $generated['name'],
                         'emoji'                => $generated['emoji'],
                         'discoveredat'         => now(),
                         'first_discoverer_uid' => auth()->id() ?? null,
-                    ]);
+                    ], 'cid');
+
+                    $resultCompound = DB::table('compounds')->where('cid', $newCid)->first();
                     $isFirstDiscovery = true;
                 }
 
-                // Salva la ricetta (con lock per evitare duplicati concorrenti)
+                // Salva la ricetta se non esiste già (race condition guard)
                 $recipeExists = DB::table('recipes')
-                    ->where('cid_a', min($compoundA->cid, $compoundB->cid))
-                    ->where('cid_b', max($compoundA->cid, $compoundB->cid))
-                    ->lockForUpdate()
+                    ->where('cid_a', $cidA)
+                    ->where('cid_b', $cidB)
                     ->exists();
 
                 if (! $recipeExists) {
-                    Recipe::createNormalized(
-                        $compoundA->cid,
-                        $compoundB->cid,
-                        $resultCompound->cid
-                    );
+                    DB::table('recipes')->insert([
+                        'cid_a'      => $cidA,
+                        'cid_b'      => $cidB,
+                        'cid_result' => $resultCompound->cid,
+                        'createdat'  => now(),
+                    ]);
                 }
 
                 return [
-                    'compound'         => $resultCompound,
+                    'compound'        => $resultCompound,
                     'is_first_discovery' => $isFirstDiscovery,
                 ];
             });
 
             return response()->json([
-                'success'          => true,
-                'result'           => $this->formatCompound($result['compound']),
-                'is_new'           => true,
-                'first_discovery'  => $result['is_first_discovery'],
+                'success'         => true,
+                'result'          => $this->formatRow($result['compound']),
+                'is_new'          => true,
+                'first_discovery' => $result['is_first_discovery'],
             ]);
 
         } catch (\Throwable $e) {
-            Log::error('GameController@combine: errore salvataggio', [
+            Log::error('GameController@combine: save error', [
                 'message' => $e->getMessage(),
                 'a'       => $compoundA->name,
                 'b'       => $compoundB->name,
@@ -148,7 +161,7 @@ class GameController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Errore interno durante il salvataggio.',
+                'message' => 'Internal error while saving.',
             ], 500);
         }
     }
@@ -161,22 +174,23 @@ class GameController extends Controller
      */
     public function elements(): JsonResponse
     {
-        $compounds = Compound::orderBy('name')->get(['cid', 'name', 'emoji']);
+        $compounds = DB::table('compounds')->orderBy('name')->get(['cid', 'name', 'emoji']);
 
         return response()->json([
-            'success'   => true,
-            'elements'  => $compounds,
+            'success'  => true,
+            'elements' => $compounds,
         ]);
     }
 
     // ── Helper ───────────────────────────────────────────────────
 
-    private function formatCompound(Compound $c): array
+    /** Formatta una riga stdClass (da DB::table) come array per il frontend */
+    private function formatRow(object $row): array
     {
         return [
-            'cid'   => $c->cid,
-            'name'  => $c->name,
-            'emoji' => $c->emoji ?? '✨',
+            'cid'   => $row->cid,
+            'name'  => $row->name,
+            'emoji' => $row->emoji ?? '✨',
         ];
     }
 }

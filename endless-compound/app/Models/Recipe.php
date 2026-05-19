@@ -46,15 +46,33 @@ class Recipe extends Model
 
     /**
      * Cerca una ricetta normalizzando l'ordine (cid_a <= cid_b).
+     * Usa DB::table diretto per coerenza con il resto delle query.
      */
     public static function findByIngredients(int $cidX, int $cidY): ?self
     {
         [$a, $b] = $cidX <= $cidY ? [$cidX, $cidY] : [$cidY, $cidX];
 
-        return static::with('result')
+        $row = \DB::table('recipes')
             ->where('cid_a', $a)
             ->where('cid_b', $b)
             ->first();
+
+        if (! $row) return null;
+
+        $instance = new static();
+        $instance->setRawAttributes((array) $row, true);
+        $instance->exists = true;
+
+        // Carica il compound risultato
+        $resultRow = \DB::table('compounds')->where('cid', $row->cid_result)->first();
+        if ($resultRow) {
+            $result = new Compound();
+            $result->setRawAttributes((array) $resultRow, true);
+            $result->exists = true;
+            $instance->setRelation('result', $result);
+        }
+
+        return $instance;
     }
 
     /**
@@ -64,11 +82,21 @@ class Recipe extends Model
     {
         [$a, $b] = $cidX <= $cidY ? [$cidX, $cidY] : [$cidY, $cidX];
 
-        return static::create([
+        \DB::table('recipes')->insert([
             'cid_a'      => $a,
             'cid_b'      => $b,
             'cid_result' => $cidResult,
             'createdat'  => now(),
         ]);
+
+        $instance = new static();
+        $instance->setRawAttributes([
+            'cid_a'      => $a,
+            'cid_b'      => $b,
+            'cid_result' => $cidResult,
+            'createdat'  => now(),
+        ], true);
+        $instance->exists = true;
+        return $instance;
     }
 }

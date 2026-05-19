@@ -57,10 +57,19 @@ class Compound extends Model
     // ── Helper statici ───────────────────────────────────────────
 
     /**
-     * Cerca un compound per nome (case-insensitive).
+     * Cerca un compound per nome (case-insensitive) usando DB::table diretto.
      */
     public static function findByName(string $name): ?self
     {
-        return static::whereRaw('LOWER(name) = ?', [strtolower(trim($name))])->first();
+        $row = \DB::table('compounds')
+            ->whereRaw('LOWER(name) = ?', [strtolower(trim($name))])
+            ->first();
+
+        if (! $row) return null;
+
+        $instance = new static();
+        $instance->setRawAttributes((array) $row, true);
+        $instance->exists = true;
+        return $instance;
     }
 }
