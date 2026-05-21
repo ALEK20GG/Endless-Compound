@@ -166,20 +166,16 @@ class LlamaCombinationService
     private function systemPrompt(): string
     {
         return <<<'PROMPT'
-Combine the provided compounds and produce a new element.
+Combine the provided words and produce a new element.
 The rules are:
 - the format must be "emoji string" for example "💨 Steam"
 - there must be only one emoji in the answer
 - the name must be in english and as concise as possible
 - the name must be as explicit as possible so the user understands what is the element about
 - dont add explainations or extra texts and punctuation just respond with the information i described in format
-- if the combound doesn't makes sense or it is meaningless, be creative and at least try to give an answer
-- the response must exist in the format given
-
-Examples:
-Water + Fire → 💨 Steam
-Earth + Water → 🌱 Mud
-Fire + Earth → 🌋 Lava
+- if the combination doesn't makes sense or it is meaningless, be creative and at least try to give an answer
+- it's better if the combination differs from the original words
+- the related emoji should be coherent with the word
 PROMPT;
     }
 
