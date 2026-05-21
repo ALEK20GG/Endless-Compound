@@ -2,8 +2,11 @@
 set -e
 
 # Permessi storage — fatto a runtime per coprire filesystem montati da Render
-chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
-chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
+chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
+chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
+mkdir -p /var/www/html/storage/logs
+touch /var/www/html/storage/logs/laravel.log
+chmod 664 /var/www/html/storage/logs/laravel.log 2>/dev/null || true
 
 # Genera APP_KEY se mancante
 if [ -z "$APP_KEY" ]; then
