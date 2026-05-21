@@ -39,6 +39,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Carica tutti gli elementi dal DB (sidebar)
     loadElements();
 
+    // Avvia il worker locale (scarica il modello in background)
+    localAI.init();
+
     // Drag & drop sulla board
     initBoardDrop(board);
 });
@@ -228,10 +231,94 @@ function updateBoardHint() {
     if (hint) hint.style.display = state.boardItems.size > 0 ? 'none' : '';
 }
 
+// ── Local inference (Transformers.js Web Worker) ─────────────────
+const localAI = (() => {
+    let worker = null;
+    let ready  = false;
+    const pending = new Map(); // id → { resolve, reject }
+    let reqId = 0;
+
+    function init() {
+        if (worker) return;
+        try {
+            worker = new Worker(new URL('./combination-worker.js', import.meta.url), { type: 'module' });
+        } catch {
+            // Worker not supported or module error — fall back to server
+            worker = null;
+            return;
+        }
+
+        worker.addEventListener('message', (e) => {
+            const msg = e.data;
+            if (msg.type === 'ready') {
+                ready = true;
+                console.log('[LocalAI] Model ready');
+            } else if (msg.type === 'progress') {
+                console.log(`[LocalAI] Downloading model: ${msg.pct}%`);
+            } else if (msg.type === 'result') {
+                pending.get(msg.id)?.resolve(msg.result);
+                pending.delete(msg.id);
+            } else if (msg.type === 'error') {
+                pending.get(msg.id)?.reject(new Error(msg.error));
+                pending.delete(msg.id);
+            }
+        });
+
+        worker.addEventListener('error', () => {
+            worker = null;
+            ready  = false;
+        });
+    }
+
+    /**
+     * Attempt local combination. Returns null if worker unavailable.
+     * Rejects if model errors out.
+     */
+    function combine(elementA, elementB) {
+        if (!worker) return Promise.resolve(null);
+
+        return new Promise((resolve, reject) => {
+            const id = ++reqId;
+            pending.set(id, { resolve, reject });
+            worker.postMessage({ id, elementA, elementB });
+
+            // 20s local timeout — fall back to server if too slow
+            setTimeout(() => {
+                if (pending.has(id)) {
+                    pending.delete(id);
+                    resolve(null); // null = "try server instead"
+                }
+            }, 20000);
+        });
+    }
+
+    return { init, combine, isReady: () => ready };
+})();
+
 // ── Combinazione ─────────────────────────────────────────────────
 async function doCombine(nameA, nameB, x, y, targetId) {
-    showToast(`⚗️ Combinando ${nameA} + ${nameB}…`, 'info');
+    showToast(`⚗️ Combining ${nameA} + ${nameB}…`, 'info');
 
+    // 1. Try local model first
+    let localResult = null;
+    try {
+        const raw = await localAI.combine(nameA, nameB);
+        if (raw) localResult = parseLocalResult(raw);
+    } catch {
+        // local model failed — fall through to server
+    }
+
+    if (localResult) {
+        // Send to server to persist (save recipe + compound) but don't wait for LLaMA
+        persistCombination(nameA, nameB, localResult);
+
+        removeBoardItem(targetId);
+        spawnBoardItem(localResult.name, localResult.emoji, x, y);
+        showToast(`${localResult.emoji} ${localResult.name}`, 'success');
+        return;
+    }
+
+    // 2. Fall back to server (OpenRouter)
     try {
         const res  = await apiFetch(state.combineUrl, 'POST', {
             element_a: nameA,
@@ -240,27 +327,21 @@ async function doCombine(nameA, nameB, x, y, targetId) {
         const data = await res.json();
 
         if (!data.success) {
-            showToast(data.message ?? 'Errore nella combinazione', 'error');
+            showToast(data.message ?? 'Combination failed', 'error');
             return;
         }
 
         const result = data.result;
-
-        // Rimuovi il target dalla board
         removeBoardItem(targetId);
-
-        // Spawna il risultato
         spawnBoardItem(result.name, result.emoji, x, y);
 
-        // Aggiorna sidebar se è un elemento nuovo
         if (data.is_new && !state.discovered.has(result.name)) {
             state.discovered.add(result.name);
             addToSidebar(result);
-
             if (data.first_discovery) {
-                showToast(`🏆 Prima scoperta mondiale: ${result.emoji} ${result.name}!`, 'first');
+                showToast(`🏆 First world discovery: ${result.emoji} ${result.name}!`, 'first');
             } else {
-                showToast(`✨ Nuovo elemento: ${result.emoji} ${result.name}`, 'success');
+                showToast(`✨ New element: ${result.emoji} ${result.name}`, 'success');
             }
         } else {
             showToast(`${result.emoji} ${result.name}`, 'success');
@@ -268,7 +349,50 @@ async function doCombine(nameA, nameB, x, y, targetId) {
 
     } catch (e) {
         console.error('doCombine error:', e);
-        showToast('Errore di rete. Riprova.', 'error');
+        showToast('Network error. Please try again.', 'error');
+    }
+}
+
+/**
+ * Parse the local model output: "💨 Steam" → { emoji, name }
+ * Returns null if the output looks invalid.
+ */
+function parseLocalResult(text) {
+    text = text.trim();
+    // Extract first emoji
+    const emojiMatch = text.match(/(\p{Emoji_Presentation}|\p{Extended_Pictographic})/u);
+    const emoji = emojiMatch?.[0] ?? null;
+
+    // Remove emoji and clean name
+    let name = text.replace(/(\p{Emoji_Presentation}|\p{Extended_Pictographic})/gu, '').trim();
+    name = name.replace(/^[→\-\s]+/, '').trim();
+    name = name.split('\n')[0].trim(); // first line only
+    name = name.slice(0, 60);
+
+    if (!name || name.length < 2) return null;
+
+    // Reject if it looks like the model repeated the prompt
+    if (name.toLowerCase().includes('combining') || name.toLowerCase().includes('infinite craft')) {
+        return null;
+    }
+
+    return { emoji: emoji ?? '✨', name };
+}
+
+/**
+ * Fire-and-forget: tell the server about a locally-generated combination
+ * so it gets saved in the DB. We don't block the UI on this.
+ */
+async function persistCombination(nameA, nameB, result) {
+    try {
+        await apiFetch(state.combineUrl, 'POST', {
+            element_a:      nameA,
+            element_b:      nameB,
+            local_result:   result.name,
+            local_emoji:    result.emoji,
+        });
+    } catch {
+        // best-effort — ignore errors
     }
 }
 

@@ -60,8 +60,12 @@ class LlamaCombinationService
             }
 
             $content = $response->json('choices.0.message.content', '');
+            // Ensure UTF-8 — some providers return latin1-encoded emoji
+            $content = mb_convert_encoding($content, 'UTF-8', 'UTF-8');
             Log::debug('LlamaCombinationService: raw response', ['content' => $content]);
-            return $this->parseResponse($content);
+            $parsed = $this->parseResponse($content);
+            Log::debug('LlamaCombinationService: parsed', ['result' => $parsed]);
+            return $parsed;
 
         } catch (\Throwable $e) {
             Log::error('LlamaCombinationService: exception', ['message' => $e->getMessage()]);
@@ -75,11 +79,26 @@ class LlamaCombinationService
      * Fallback models tried in order when the primary is rate-limited.
      * All are free on OpenRouter.
      */
+    /**
+     * Fallback models in priority order:
+     * - Low-traffic / less congested models first
+     * - Higher-traffic popular models as last resort
+     */
     private array $fallbackModels = [
+        // Low traffic, consistently available
         'nvidia/nemotron-nano-12b-v2-vl:free',
+        'nvidia/nemotron-3-nano-30b-a3b:free',
+        'nvidia/nemotron-3-super-120b-a12b:free',
+        'liquid/lfm-2.5-1.2b-instruct:free',
+        'liquid/lfm-2.5-1.2b-thinking:free',
+        'poolside/laguna-xs.2:free',
+        'poolside/laguna-m.1:free',
         'google/gemma-4-26b-a4b-it:free',
         'google/gemma-4-31b-it:free',
-        'liquid/lfm-2.5-1.2b-instruct:free',
+        'z-ai/glm-4.5-air:free',
+        'openai/gpt-oss-20b:free',
+        'openai/gpt-oss-120b:free',
+        // Higher traffic, use as last resort
         'meta-llama/llama-3.2-3b-instruct:free',
         'meta-llama/llama-3.3-70b-instruct:free',
     ];
@@ -174,33 +193,47 @@ PROMPT;
     /**
      * Extracts emoji and name from the model response.
      * Expected format: "💧 Pure Water" or "💧Pure Water"
+     * Also handles mojibake emoji (ðŸŒ‹) by stripping them and using a fallback.
      */
     private function parseResponse(string $content): ?array
     {
+        // Force UTF-8 interpretation
+        $content = mb_convert_encoding(trim($content), 'UTF-8', 'UTF-8');
+
+        // Strip markdown bold markers
+        $content = preg_replace('/\*+/', '', $content);
         $content = trim($content);
 
         if (empty($content)) {
             return null;
         }
 
-        // Estrai la prima emoji Unicode dalla stringa
+        // Extract first valid emoji
         preg_match('/(\p{Emoji_Presentation}|\p{Extended_Pictographic})/u', $content, $emojiMatch);
-        $emoji = $emojiMatch[0] ?? '✨';
+        $emoji = $emojiMatch[0] ?? null;
 
-        // Rimuovi l'emoji e pulisci il nome
-        $name = trim(preg_replace('/(\p{Emoji_Presentation}|\p{Extended_Pictographic})/u', '', $content));
-        $name = trim($name, " \t\n\r\0\x0B→-");
+        // Remove emoji (and any mojibake sequences like ðŸ...) and clean the name
+        $name = preg_replace('/(\p{Emoji_Presentation}|\p{Extended_Pictographic})/u', '', $content);
+        // Remove common mojibake patterns (multi-byte sequences misread as latin1)
+        $name = preg_replace('/[\xc2-\xf4][\x80-\xbf]+/', '', $name);
+        $name = trim($name, " \t\n\r\0\x0B→-*");
+        $name = trim($name);
 
-        // Capitalizza e limita la lunghezza
-        $name = mb_convert_case(mb_substr($name, 0, 60), MB_CASE_TITLE, 'UTF-8');
+        // Take only the first line/word group
+        $name = explode("\n", $name)[0];
+        $name = trim($name);
+        $name = mb_substr($name, 0, 60);
 
-        if (empty($name)) {
+        if (empty($name) || mb_strlen($name) < 2) {
             return null;
         }
 
+        // Capitalize
+        $name = mb_convert_case($name, MB_CASE_TITLE, 'UTF-8');
+
         return [
             'name'  => $name,
-            'emoji' => $emoji,
+            'emoji' => $emoji ?? '✨',
         ];
     }
 }

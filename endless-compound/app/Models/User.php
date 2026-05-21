@@ -19,6 +19,12 @@ class User extends Authenticatable
     // Supabase non usa created_at/updated_at standard
     public $timestamps = false;
 
+    // La tabella Supabase non ha remember_token
+    public function getRememberTokenName(): string
+    {
+        return '';
+    }
+
     protected $fillable = [
         'username',
         'email',

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 class GoogleAuthController extends Controller
@@ -35,6 +36,10 @@ class GoogleAuthController extends Controller
             $user = User::where('email', $googleUser->getEmail())->first();
 
             if ($user) {
+                // Aggiorna lastlogin
+                DB::table('users')->where('uid', $user->uid)->update([
+                    'lastlogin' => now(),
+                ]);
                 Auth::login($user);
             } else {
                 $user = User::create([
@@ -42,12 +47,13 @@ class GoogleAuthController extends Controller
                     'email'     => $googleUser->getEmail(),
                     'password'  => Hash::make(uniqid()),
                     'createdat' => now(),
+                    'lastlogin' => now(),
                 ]);
 
                 Auth::login($user);
             }
 
-            return redirect()->intended(route('game.index'));
+            return redirect()->intended(route('dashboard'));
 
         } catch (\Exception $e) {
             return redirect('/login')->withErrors([

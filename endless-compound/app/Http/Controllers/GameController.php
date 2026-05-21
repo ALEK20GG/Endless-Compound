@@ -47,8 +47,10 @@ class GameController extends Controller
     {
         // 1. Validazione input
         $data = $request->validate([
-            'element_a' => ['required', 'string', 'max:100'],
-            'element_b' => ['required', 'string', 'max:100'],
+            'element_a'    => ['required', 'string', 'max:100'],
+            'element_b'    => ['required', 'string', 'max:100'],
+            'local_result' => ['sometimes', 'string', 'max:100'],
+            'local_emoji'  => ['sometimes', 'string', 'max:10'],
         ]);
 
         $nameA = trim(strip_tags($data['element_a']));
@@ -90,8 +92,15 @@ class GameController extends Controller
             ]);
         }
 
-        // 4. Genera con LLaMA
-        $generated = $this->llama->combine($compoundA->name, $compoundB->name);
+        // 4. Genera con LLaMA (o usa risultato locale se fornito dal frontend)
+        $localName  = trim(strip_tags($request->input('local_result', '')));
+        $localEmoji = trim($request->input('local_emoji', ''));
+
+        $generated = ($localName !== '')
+            ? ['name' => $localName, 'emoji' => $localEmoji ?: '✨']
+            : $this->llama->combine($compoundA->name, $compoundB->name);
+
+        Log::debug('GameController@combine: generated', ['generated' => $generated, 'a' => $compoundA->name, 'b' => $compoundB->name]);
 
         if (! $generated) {
             return response()->json([

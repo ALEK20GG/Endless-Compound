@@ -4,6 +4,7 @@ namespace App\Livewire\Forms;
 
 use Illuminate\Auth\Events\Lockout;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -37,6 +38,11 @@ class LoginForm extends Form
                 'form.email' => trans('auth.failed'),
             ]);
         }
+
+        // Aggiorna lastlogin
+        DB::table('users')->where('uid', Auth::id())->update([
+            'lastlogin' => now(),
+        ]);
 
         RateLimiter::clear($this->throttleKey());
     }

@@ -2,23 +2,45 @@
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth;
 use App\Http\Controllers\GameController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 
-// Home: pagina principale di gioco
-Route::get('/', [GameController::class, 'index'])->name('game.index');
+// Logout esplicito
+Route::post('/logout', function () {
+    Auth::guard('web')->logout();
+    request()->session()->invalidate();
+    request()->session()->regenerateToken();
+    return redirect()->route('home');
+})->middleware('auth')->name('logout');
 
-Route::view('dashboard', 'dashboard')
-    ->middleware(['auth', 'verified'])
-    ->name('dashboard');
+// Home: se non loggato → landing pubblica, se loggato → dashboard modalità
+Route::get('/', function () {
+    if (auth()->check()) {
+        return redirect()->route('dashboard');
+    }
+    return view('dashboard');
+})->name('home');
+
+// Dashboard modalità di gioco — richiede auth
+Route::get('/dashboard', function () {
+    return view('dashboard-play');
+})->middleware('auth')->name('dashboard');
+
+// Gioco singleplayer — richiede autenticazione
+Route::get('/game', [GameController::class, 'index'])
+    ->middleware('auth')
+    ->name('game.index');
 
 Route::view('profile', 'profile')
     ->middleware(['auth'])
     ->name('profile');
 
-// Endpoints AJAX per il gioco
-Route::post('/game/combine', [GameController::class, 'combine'])->name('game.combine');
-Route::get('/game/elements', [GameController::class, 'elements'])->name('game.elements');
+// Endpoints AJAX per il gioco — richiede autenticazione
+Route::middleware('auth')->group(function () {
+    Route::post('/game/combine', [GameController::class, 'combine'])->name('game.combine');
+    Route::get('/game/elements', [GameController::class, 'elements'])->name('game.elements');
+});
 
 // Google OAuth — definite QUI così la route 'auth.google' esiste sempre
 Route::get('/auth/google', [GoogleAuthController::class, 'redirectToGoogle'])->name('auth.google');

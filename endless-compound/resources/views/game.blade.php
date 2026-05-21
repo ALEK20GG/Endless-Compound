@@ -11,20 +11,20 @@
 
 {{-- ── NAVBAR ──────────────────────────────────────────────────── --}}
 <nav class="bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between">
-    <span class="text-lg font-bold tracking-wide text-indigo-400">⚗️ Endless Compound</span>
+    <a href="{{ route('game.index') }}" class="text-lg font-bold tracking-wide text-indigo-400">⚗️ Endless Compound</a>
     <div class="flex items-center gap-3 text-sm">
-        @auth
-            <span class="text-gray-400">{{ auth()->user()->username }}</span>
-            <form method="POST" action="{{ route('logout') }}">
-                @csrf
-                <button class="text-gray-500 hover:text-white transition">Esci</button>
-            </form>
-        @else
-            <a href="{{ route('login') }}" class="text-indigo-400 hover:text-indigo-300 transition">Accedi</a>
-            <a href="{{ route('auth.google') }}" class="text-indigo-400 hover:text-indigo-300 transition">Google</a>
-        @endauth
+        <span class="text-gray-400">{{ auth()->user()->username }}</span>
+        <button
+            onclick="document.getElementById('logout-form').submit()"
+            class="text-gray-500 hover:text-white transition">
+            Log out
+        </button>
     </div>
 </nav>
+
+<form id="logout-form" method="POST" action="{{ route('logout') }}" style="display:none">
+    @csrf
+</form>
 
 {{-- ── LAYOUT PRINCIPALE ───────────────────────────────────────── --}}
 <div class="flex flex-1 overflow-hidden" style="height: calc(100vh - 53px)">
