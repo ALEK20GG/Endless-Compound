@@ -27,20 +27,24 @@ Route::get('/dashboard', function () {
     return view('dashboard-play');
 })->middleware('auth')->name('dashboard');
 
-// Gioco singleplayer — richiede autenticazione
-Route::get('/game', [GameController::class, 'index'])
+// Gioco singleplayer — crea/riusa room e reindirizza
+Route::get('/game', [GameController::class, 'startSolo'])
     ->middleware('auth')
     ->name('game.index');
 
-Route::view('profile', 'profile')
-    ->middleware(['auth'])
-    ->name('profile');
-
-// Endpoints AJAX per il gioco — richiede autenticazione
+// Endpoints AJAX — devono stare PRIMA di /game/{roid} per non essere catturati dal parametro
 Route::middleware('auth')->group(function () {
     Route::post('/game/combine', [GameController::class, 'combine'])->name('game.combine');
     Route::get('/game/elements', [GameController::class, 'elements'])->name('game.elements');
+    Route::post('/game/multiplayer/create', [GameController::class, 'createMultiplayer'])->name('game.multiplayer.create');
+    Route::post('/game/multiplayer/join', [GameController::class, 'joinMultiplayer'])->name('game.multiplayer.join');
 });
+
+// Gioco in una room specifica — DOPO le route statiche
+Route::get('/game/{roid}', [GameController::class, 'index'])
+    ->middleware('auth')
+    ->whereNumber('roid')
+    ->name('game.room');
 
 // Google OAuth — definite QUI così la route 'auth.google' esiste sempre
 Route::get('/auth/google', [GoogleAuthController::class, 'redirectToGoogle'])->name('auth.google');

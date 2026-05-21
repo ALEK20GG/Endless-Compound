@@ -10,60 +10,199 @@ use App\Services\LlamaCombinationService;
 
 class GameController extends Controller
 {
+    // Base element names (case-insensitive)
+    private const BASE_ELEMENTS = ['water', 'fire', 'earth', 'wind'];
+
     public function __construct(
         private readonly LlamaCombinationService $llama
     ) {}
 
-    // ── Pagina principale ────────────────────────────────────────
+    // ── Singleplayer ─────────────────────────────────────────────
 
-    public function index(Request $request)
+    public function startSolo(): \Illuminate\Http\RedirectResponse
     {
-        $rooms = DB::table('rooms')->orderBy('createdat', 'desc')->get();
+        $uid = auth()->id();
 
-        // Base elements: compounds with no discoverer (seeded)
-        $baseElements = DB::table('compounds')
-            ->whereNull('first_discoverer_uid')
-            ->orderBy('cid')
-            ->get(['cid', 'name', 'emoji']);
+        $room = DB::table('rooms')
+            ->where('owner_uid', $uid)
+            ->where('maxplayers', 1)
+            ->orderBy('createdat', 'desc')
+            ->first();
 
-        return view('game', compact('rooms', 'baseElements'));
+        if (! $room) {
+            $roid = DB::table('rooms')->insertGetId([
+                'name'       => auth()->user()->username . "'s room",
+                'isprivate'  => true,
+                'maxplayers' => 1,
+                'owner_uid'  => $uid,
+                'createdat'  => now(),
+            ], 'roid');
+            $this->seedRoomWithBaseElements($roid);
+        } else {
+            $roid = $room->roid;
+            $this->ensureBaseElements($roid);
+        }
+
+        return redirect()->route('game.room', ['roid' => $roid]);
+    }
+
+    // ── Multiplayer: crea room ────────────────────────────────────
+
+    /**
+     * POST /game/multiplayer/create
+     * Body: { name, maxplayers }
+     */
+    public function createMultiplayer(Request $request): \Illuminate\Http\RedirectResponse
+    {
+        $data = $request->validate([
+            'name'       => ['required', 'string', 'max:60'],
+            'maxplayers' => ['required', 'integer', 'min:2', 'max:10'],
+        ]);
+
+        $uid  = auth()->id();
+        $code = strtoupper(substr(md5(uniqid($uid, true)), 0, 6));
+
+        $roid = DB::table('rooms')->insertGetId([
+            'name'       => trim(strip_tags($data['name'])),
+            'isprivate'  => false,
+            'maxplayers' => $data['maxplayers'],
+            'owner_uid'  => $uid,
+            'createdat'  => now(),
+            'code'       => $code,
+        ], 'roid');
+
+        // Owner entra automaticamente in collabs_in
+        DB::table('collabs_in')->insert([
+            'uid'      => $uid,
+            'roid'     => $roid,
+            'joinedat' => now(),
+        ]);
+
+        $this->seedRoomWithBaseElements($roid);
+
+        return redirect()->route('game.room', ['roid' => $roid]);
+    }
+
+    // ── Multiplayer: entra in room ────────────────────────────────
+
+    /**
+     * POST /game/multiplayer/join
+     * Body: { code }
+     */
+    public function joinMultiplayer(Request $request): \Illuminate\Http\RedirectResponse|\Illuminate\Http\JsonResponse
+    {
+        $data = $request->validate([
+            'code' => ['required', 'string', 'size:6'],
+        ]);
+
+        $uid  = auth()->id();
+        $code = strtoupper(trim($data['code']));
+
+        $room = DB::table('rooms')->where('code', $code)->first();
+
+        if (! $room) {
+            return back()->withErrors(['code' => 'Room not found.']);
+        }
+
+        // Conta i player attuali
+        $currentPlayers = DB::table('collabs_in')->where('roid', $room->roid)->count();
+        if ($currentPlayers >= $room->maxplayers) {
+            return back()->withErrors(['code' => 'Room is full.']);
+        }
+
+        // Aggiungi a collabs_in se non già presente
+        $alreadyIn = DB::table('collabs_in')
+            ->where('uid', $uid)->where('roid', $room->roid)->exists();
+
+        if (! $alreadyIn) {
+            DB::table('collabs_in')->insert([
+                'uid'      => $uid,
+                'roid'     => $room->roid,
+                'joinedat' => now(),
+            ]);
+        }
+
+        $this->ensureBaseElements($room->roid);
+
+        return redirect()->route('game.room', ['roid' => $room->roid]);
+    }
+
+    // ── Pagina di gioco ──────────────────────────────────────────
+
+    public function index(Request $request, int $roid)
+    {
+        $uid = auth()->id();
+
+        $room = DB::table('rooms')->where('roid', $roid)->first();
+
+        if (! $room) {
+            abort(404);
+        }
+
+        // Accesso: owner oppure membro di collabs_in
+        $hasAccess = ($room->owner_uid == $uid)
+            || DB::table('collabs_in')->where('uid', $uid)->where('roid', $roid)->exists();
+
+        if (! $hasAccess) {
+            abort(403, 'You do not have access to this room.');
+        }
+
+        $roomElements = DB::table('room_comps')
+            ->join('compounds', 'room_comps.cid', '=', 'compounds.cid')
+            ->where('room_comps.roid', $roid)
+            ->orderBy('compounds.name')
+            ->get(['compounds.cid', 'compounds.name', 'compounds.emoji']);
+
+        // Player nella room (per multiplayer)
+        $players = DB::table('collabs_in')
+            ->join('users', 'collabs_in.uid', '=', 'users.uid')
+            ->where('collabs_in.roid', $roid)
+            ->get(['users.uid', 'users.username']);
+
+        $isMultiplayer = $room->maxplayers > 1;
+
+        // CID degli elementi scoperti per la prima volta da questo player
+        $myDiscoveries = DB::table('compounds')
+            ->where('first_discoverer_uid', $uid)
+            ->pluck('cid')
+            ->toArray();
+
+        return view('game', compact('room', 'roomElements', 'players', 'isMultiplayer', 'myDiscoveries'));
     }
 
     // ── Combine (AJAX) ───────────────────────────────────────────
 
-    /**
-     * POST /game/combine
-     *
-     * Body JSON: { "element_a": "Acqua", "element_b": "Fuoco" }
-     *
-     * Flusso:
-     * 1. Valida e sanifica input
-     * 2. Risolve i compound dal DB per nome
-     * 3. Cerca la ricetta in DB (cache locale)
-     * 4. Se non esiste → chiama LLaMA → salva compound + ricetta in transazione
-     * 5. Ritorna il risultato
-     */
     public function combine(Request $request): JsonResponse
     {
-        // 1. Validazione input
         $data = $request->validate([
+            'roid'         => ['required', 'integer'],
             'element_a'    => ['required', 'string', 'max:100'],
             'element_b'    => ['required', 'string', 'max:100'],
             'local_result' => ['sometimes', 'string', 'max:100'],
             'local_emoji'  => ['sometimes', 'string', 'max:10'],
         ]);
 
+        $uid  = auth()->id();
+        $roid = (int) $data['roid'];
+
+        // Verifica accesso alla room
+        $room = DB::table('rooms')->where('roid', $roid)->first();
+        if (! $room) {
+            return response()->json(['success' => false, 'message' => 'Room not found.'], 403);
+        }
+
+        $hasAccess = ($room->owner_uid == $uid)
+            || DB::table('collabs_in')->where('uid', $uid)->where('roid', $roid)->exists();
+
+        if (! $hasAccess) {
+            return response()->json(['success' => false, 'message' => 'Access denied.'], 403);
+        }
+
         $nameA = trim(strip_tags($data['element_a']));
         $nameB = trim(strip_tags($data['element_b']));
 
-        // 2. Risolvi compound dal DB (DB::table diretto, come dbcheck)
-        $compoundA = DB::table('compounds')
-            ->whereRaw('LOWER(name) = ?', [strtolower($nameA)])
-            ->first();
-
-        $compoundB = DB::table('compounds')
-            ->whereRaw('LOWER(name) = ?', [strtolower($nameB)])
-            ->first();
+        $compoundA = DB::table('compounds')->whereRaw('LOWER(name) = ?', [strtolower($nameA)])->first();
+        $compoundB = DB::table('compounds')->whereRaw('LOWER(name) = ?', [strtolower($nameB)])->first();
 
         if (! $compoundA || ! $compoundB) {
             return response()->json([
@@ -72,35 +211,34 @@ class GameController extends Controller
             ], 422);
         }
 
-        // 3. Cerca ricetta esistente
         [$cidA, $cidB] = $compoundA->cid <= $compoundB->cid
             ? [$compoundA->cid, $compoundB->cid]
             : [$compoundB->cid, $compoundA->cid];
 
+        // Ricetta globale esistente?
         $recipe = DB::table('recipes')
-            ->where('cid_a', $cidA)
-            ->where('cid_b', $cidB)
-            ->first();
+            ->where('cid_a', $cidA)->where('cid_b', $cidB)->first();
 
         if ($recipe) {
-            $result = DB::table('compounds')->where('cid', $recipe->cid_result)->first();
+            $resultCompound = DB::table('compounds')->where('cid', $recipe->cid_result)->first();
+            $isNewInRoom    = $this->addToRoom($roid, $resultCompound->cid);
+
             return response()->json([
                 'success'         => true,
-                'result'          => $this->formatRow($result),
+                'result'          => $this->formatRow($resultCompound),
                 'is_new'          => false,
+                'new_in_room'     => $isNewInRoom,
                 'first_discovery' => false,
             ]);
         }
 
-        // 4. Genera con LLaMA (o usa risultato locale se fornito dal frontend)
+        // Genera con LLaMA
         $localName  = trim(strip_tags($request->input('local_result', '')));
         $localEmoji = trim($request->input('local_emoji', ''));
 
         $generated = ($localName !== '')
             ? ['name' => $localName, 'emoji' => $localEmoji ?: '✨']
             : $this->llama->combine($compoundA->name, $compoundB->name);
-
-        Log::debug('GameController@combine: generated', ['generated' => $generated, 'a' => $compoundA->name, 'b' => $compoundB->name]);
 
         if (! $generated) {
             return response()->json([
@@ -109,10 +247,8 @@ class GameController extends Controller
             ], 503);
         }
 
-        // 5. Salva in transazione
         try {
-            $result = DB::transaction(function () use ($cidA, $cidB, $generated) {
-                // Controlla se il compound esiste già
+            $result = DB::transaction(function () use ($cidA, $cidB, $generated, $roid, $uid) {
                 $existing = DB::table('compounds')
                     ->whereRaw('LOWER(name) = ?', [strtolower($generated['name'])])
                     ->first();
@@ -122,22 +258,19 @@ class GameController extends Controller
                 if ($existing) {
                     $resultCompound = $existing;
                 } else {
+                    // First discovery → sempre al player che fa la combinazione
                     $newCid = DB::table('compounds')->insertGetId([
                         'name'                 => $generated['name'],
                         'emoji'                => $generated['emoji'],
                         'discoveredat'         => now(),
-                        'first_discoverer_uid' => auth()->id() ?? null,
+                        'first_discoverer_uid' => $uid,
                     ], 'cid');
-
-                    $resultCompound = DB::table('compounds')->where('cid', $newCid)->first();
+                    $resultCompound   = DB::table('compounds')->where('cid', $newCid)->first();
                     $isFirstDiscovery = true;
                 }
 
-                // Salva la ricetta se non esiste già (race condition guard)
                 $recipeExists = DB::table('recipes')
-                    ->where('cid_a', $cidA)
-                    ->where('cid_b', $cidB)
-                    ->exists();
+                    ->where('cid_a', $cidA)->where('cid_b', $cidB)->exists();
 
                 if (! $recipeExists) {
                     DB::table('recipes')->insert([
@@ -148,52 +281,111 @@ class GameController extends Controller
                     ]);
                 }
 
-                return [
-                    'compound'        => $resultCompound,
-                    'is_first_discovery' => $isFirstDiscovery,
-                ];
+                $this->addToRoom($roid, $resultCompound->cid);
+
+                return ['compound' => $resultCompound, 'is_first_discovery' => $isFirstDiscovery];
             });
 
             return response()->json([
                 'success'         => true,
                 'result'          => $this->formatRow($result['compound']),
                 'is_new'          => true,
+                'new_in_room'     => true,
                 'first_discovery' => $result['is_first_discovery'],
             ]);
 
         } catch (\Throwable $e) {
-            Log::error('GameController@combine: save error', [
-                'message' => $e->getMessage(),
-                'a'       => $compoundA->name,
-                'b'       => $compoundB->name,
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Internal error while saving.',
-            ], 500);
+            Log::error('GameController@combine: save error', ['message' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Internal error while saving.'], 500);
         }
     }
 
-    // ── Elementi scoperti (AJAX sidebar) ─────────────────────────
+    // ── Elementi della room (AJAX + polling) ─────────────────────
 
     /**
-     * GET /game/elements
-     * Ritorna tutti i compound scoperti (per la sidebar).
+     * GET /game/elements?roid={roid}&since={timestamp}
+     * Ritorna gli elementi aggiunti dopo `since` (per il polling multiplayer).
      */
-    public function elements(): JsonResponse
+    public function elements(Request $request): JsonResponse
     {
-        $compounds = DB::table('compounds')->orderBy('name')->get(['cid', 'name', 'emoji']);
+        $roid  = (int) $request->query('roid', 0);
+        $since = $request->query('since'); // ISO timestamp opzionale
+        $uid   = auth()->id();
+
+        if (! $roid) {
+            return response()->json(['success' => false, 'message' => 'Missing roid.'], 422);
+        }
+
+        $room = DB::table('rooms')->where('roid', $roid)->first();
+        if (! $room) {
+            return response()->json(['success' => false, 'message' => 'Room not found.'], 404);
+        }
+
+        $hasAccess = ($room->owner_uid == $uid)
+            || DB::table('collabs_in')->where('uid', $uid)->where('roid', $roid)->exists();
+
+        if (! $hasAccess) {
+            return response()->json(['success' => false, 'message' => 'Access denied.'], 403);
+        }
+
+        $query = DB::table('room_comps')
+            ->join('compounds', 'room_comps.cid', '=', 'compounds.cid')
+            ->where('room_comps.roid', $roid);
+
+        // Se `since` è fornito, ritorna solo i nuovi elementi (per il polling)
+        if ($since) {
+            $query->where('room_comps.addedat', '>', $since);
+        }
+
+        $elements = $query->orderBy('compounds.name')
+            ->get(['compounds.cid', 'compounds.name', 'compounds.emoji', 'room_comps.addedat']);
+
+        // Timestamp dell'ultimo elemento per il prossimo poll
+        $lastUpdated = DB::table('room_comps')
+            ->where('roid', $roid)
+            ->max('addedat');
 
         return response()->json([
-            'success'  => true,
-            'elements' => $compounds,
+            'success'      => true,
+            'elements'     => $elements,
+            'last_updated' => $lastUpdated,
         ]);
     }
 
-    // ── Helper ───────────────────────────────────────────────────
+    // ── Helper privati ───────────────────────────────────────────
 
-    /** Formatta una riga stdClass (da DB::table) come array per il frontend */
+    private function addToRoom(int $roid, int $cid): bool
+    {
+        $exists = DB::table('room_comps')
+            ->where('roid', $roid)->where('cid', $cid)->exists();
+
+        if (! $exists) {
+            DB::table('room_comps')->insert([
+                'roid'    => $roid,
+                'cid'     => $cid,
+                'addedat' => now(),
+            ]);
+            return true;
+        }
+        return false;
+    }
+
+    private function seedRoomWithBaseElements(int $roid): void
+    {
+        $baseElements = DB::table('compounds')
+            ->whereRaw('LOWER(name) IN (?, ?, ?, ?)', self::BASE_ELEMENTS)
+            ->pluck('cid');
+
+        foreach ($baseElements as $cid) {
+            $this->addToRoom($roid, $cid);
+        }
+    }
+
+    private function ensureBaseElements(int $roid): void
+    {
+        $this->seedRoomWithBaseElements($roid);
+    }
+
     private function formatRow(object $row): array
     {
         return [

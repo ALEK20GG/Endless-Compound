@@ -46,18 +46,52 @@
                 </span>
             </a>
 
-            {{-- Multiplayer (coming soon) --}}
-            <div class="bg-gray-900 border border-gray-800 rounded-2xl p-8 flex flex-col items-center gap-4 opacity-50 cursor-not-allowed">
-                <div class="text-5xl">👥</div>
-                <div class="text-center">
-                    <h2 class="text-xl font-semibold">Multiplayer</h2>
-                    <p class="text-gray-400 text-sm mt-1">
-                        Join a room and discover elements together with other players in real time.
-                    </p>
+            {{-- Multiplayer --}}
+            <div class="bg-gray-900 border border-gray-700 rounded-2xl p-8 flex flex-col gap-5">
+                <div class="flex items-center gap-3">
+                    <div class="text-5xl">👥</div>
+                    <div>
+                        <h2 class="text-xl font-semibold">Multiplayer</h2>
+                        <p class="text-gray-400 text-sm mt-1">Discover elements together in real time.</p>
+                    </div>
                 </div>
-                <span class="mt-auto bg-gray-700 text-gray-400 text-sm font-medium px-5 py-2 rounded-full">
-                    Coming soon
-                </span>
+
+                {{-- Crea room --}}
+                <form method="POST" action="{{ route('game.multiplayer.create') }}" class="space-y-2">
+                    @csrf
+                    <input type="text" name="name" placeholder="Room name"
+                           maxlength="60" required
+                           class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500">
+                    <div class="flex gap-2">
+                        <select name="maxplayers"
+                                class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                            @for($i = 2; $i <= 8; $i++)
+                                <option value="{{ $i }}">{{ $i }} players</option>
+                            @endfor
+                        </select>
+                        <button type="submit"
+                                class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+                            Create room
+                        </button>
+                    </div>
+                </form>
+
+                <div class="border-t border-gray-800 pt-4">
+                    {{-- Entra in room --}}
+                    <form method="POST" action="{{ route('game.multiplayer.join') }}" class="flex gap-2">
+                        @csrf
+                        <input type="text" name="code" placeholder="Room code (6 chars)"
+                               maxlength="6" required
+                               class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 uppercase focus:outline-none focus:border-indigo-500">
+                        <button type="submit"
+                                class="bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+                            Join
+                        </button>
+                    </form>
+                    @error('code')
+                        <p class="text-red-400 text-xs mt-1">{{ $message }}</p>
+                    @enderror
+                </div>
             </div>
 
         </div>

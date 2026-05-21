@@ -11,14 +11,17 @@
 
 {{-- ── NAVBAR ──────────────────────────────────────────────────── --}}
 <nav class="bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between">
-    <a href="{{ route('game.index') }}" class="text-lg font-bold tracking-wide text-indigo-400">⚗️ Endless Compound</a>
+    <a href="{{ route('dashboard') }}" class="text-lg font-bold tracking-wide text-indigo-400">⚗️ Endless Compound</a>
     <div class="flex items-center gap-3 text-sm">
+        @if($isMultiplayer)
+            <span class="bg-indigo-900 border border-indigo-700 text-indigo-300 text-xs font-mono px-2 py-1 rounded">
+                Code: {{ $room->code ?? '—' }}
+            </span>
+            <span class="text-gray-500 text-xs">{{ $players->count() }}/{{ $room->maxplayers }} players</span>
+        @endif
         <span class="text-gray-400">{{ auth()->user()->username }}</span>
-        <button
-            onclick="document.getElementById('logout-form').submit()"
-            class="text-gray-500 hover:text-white transition">
-            Log out
-        </button>
+        <button onclick="document.getElementById('logout-form').submit()"
+                class="text-gray-500 hover:text-white transition">Log out</button>
     </div>
 </nav>
 
@@ -53,7 +56,11 @@
           class="flex-1 relative overflow-hidden bg-gray-950 select-none"
           data-combine-url="{{ route('game.combine') }}"
           data-elements-url="{{ route('game.elements') }}"
-          data-base-elements='@json($baseElements)'>
+          data-roid="{{ $room->roid }}"
+          data-multiplayer="{{ $isMultiplayer ? 'true' : 'false' }}"
+          data-uid="{{ auth()->id() }}"
+          data-my-discoveries='@json($myDiscoveries)'
+          data-base-elements='@json($roomElements)'>
 
         {{-- Messaggio centrale quando la board è vuota --}}
         <div id="board-hint"

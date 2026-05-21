@@ -118,6 +118,19 @@
     to   { opacity: 1; transform: scale(1); }
 }
 
+.board-item.own-discovery {
+    border-color: #ca8a04;
+    box-shadow: 0 0 0 2px rgba(202,138,4,0.4), 0 0 12px rgba(202,138,4,0.25);
+    background: linear-gradient(135deg, #1e293b 0%, #1c1a0e 100%);
+}
+
+/* Sidebar: own discovery */
+.sidebar-item.own-discovery {
+    background: linear-gradient(90deg, rgba(202,138,4,0.12) 0%, transparent 100%);
+    border-left: 2px solid #ca8a04;
+    padding-left: 6px;
+}
+
 .board-item.spawning {
     animation: spawn-in 0.2s ease-out;
 }
