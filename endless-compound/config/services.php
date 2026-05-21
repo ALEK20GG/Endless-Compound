@@ -46,4 +46,10 @@ return [
         'model'    => env('LLAMA_MODEL', 'meta-llama/llama-3.3-70b-instruct:free'),
     ],
 
+    'google' => [
+        'client_id'     => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect'      => env('GOOGLE_REDIRECT_URI'),
+    ],
+
 ];
