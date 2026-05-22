@@ -6,6 +6,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 use App\Services\LlamaCombinationService;
 
 class GameController extends Controller
@@ -215,7 +217,7 @@ class GameController extends Controller
             ? [$compoundA->cid, $compoundB->cid]
             : [$compoundB->cid, $compoundA->cid];
 
-        // Ricetta globale esistente?
+        // Ricetta globale esistente? → risposta immediata
         $recipe = DB::table('recipes')
             ->where('cid_a', $cidA)->where('cid_b', $cidB)->first();
 
@@ -232,72 +234,79 @@ class GameController extends Controller
             ]);
         }
 
-        // Genera con LLaMA
+        // Risultato locale dal worker JS? → salva e risposta immediata
         $localName  = trim(strip_tags($request->input('local_result', '')));
         $localEmoji = trim($request->input('local_emoji', ''));
 
-        $generated = ($localName !== '')
-            ? ['name' => $localName, 'emoji' => $localEmoji ?: '✨']
-            : $this->llama->combine($compoundA->name, $compoundB->name);
+        if ($localName !== '') {
+            $generated = ['name' => $localName, 'emoji' => $localEmoji ?: '✨'];
+            return $this->saveAndRespond($cidA, $cidB, $generated, $roid, $uid);
+        }
+
+        // Nessuna ricetta e nessun risultato locale → avvia job asincrono
+        $jobId = Str::uuid()->toString();
+
+        // Salva i parametri del job in cache (5 minuti)
+        Cache::put("combine_job:{$jobId}", [
+            'status'    => 'pending',
+            'cidA'      => $cidA,
+            'cidB'      => $cidB,
+            'nameA'     => $compoundA->name,
+            'nameB'     => $compoundB->name,
+            'roid'      => $roid,
+            'uid'       => $uid,
+        ], 300);
+
+        // Avvia il job in background tramite un processo separato
+        // (su Render non c'è queue worker, usiamo un approccio diverso:
+        //  il primo poll eseguirà il lavoro reale)
+        return response()->json([
+            'success' => true,
+            'pending' => true,
+            'job_id'  => $jobId,
+        ]);
+    }
+
+    /**
+     * GET /game/combine/poll/{jobId}
+     * Esegue il lavoro LLM se ancora pending, poi ritorna il risultato.
+     */
+    public function combinePoll(string $jobId): JsonResponse
+    {
+        $cacheKey = "combine_job:{$jobId}";
+        $job = Cache::get($cacheKey);
+
+        if (! $job) {
+            return response()->json(['success' => false, 'message' => 'Job expired or not found.'], 404);
+        }
+
+        if ($job['status'] === 'done') {
+            Cache::forget($cacheKey);
+            return response()->json($job['result']);
+        }
+
+        if ($job['status'] === 'error') {
+            Cache::forget($cacheKey);
+            return response()->json(['success' => false, 'message' => $job['message']], 503);
+        }
+
+        // Status è 'pending' → esegui il lavoro ora (con timeout esteso)
+        set_time_limit(180);
+
+        $generated = $this->llama->combine($job['nameA'], $job['nameB']);
 
         if (! $generated) {
+            Cache::forget($cacheKey);
             return response()->json([
                 'success' => false,
                 'message' => 'Unable to generate combination right now. Please try again.',
             ], 503);
         }
 
-        try {
-            $result = DB::transaction(function () use ($cidA, $cidB, $generated, $roid, $uid) {
-                $existing = DB::table('compounds')
-                    ->whereRaw('LOWER(name) = ?', [strtolower($generated['name'])])
-                    ->first();
+        $result = $this->saveAndRespond($job['cidA'], $job['cidB'], $generated, $job['roid'], $job['uid'], returnArray: true);
 
-                $isFirstDiscovery = false;
-
-                if ($existing) {
-                    $resultCompound = $existing;
-                } else {
-                    // First discovery → sempre al player che fa la combinazione
-                    $newCid = DB::table('compounds')->insertGetId([
-                        'name'                 => $generated['name'],
-                        'emoji'                => $generated['emoji'],
-                        'discoveredat'         => now(),
-                        'first_discoverer_uid' => $uid,
-                    ], 'cid');
-                    $resultCompound   = DB::table('compounds')->where('cid', $newCid)->first();
-                    $isFirstDiscovery = true;
-                }
-
-                $recipeExists = DB::table('recipes')
-                    ->where('cid_a', $cidA)->where('cid_b', $cidB)->exists();
-
-                if (! $recipeExists) {
-                    DB::table('recipes')->insert([
-                        'cid_a'      => $cidA,
-                        'cid_b'      => $cidB,
-                        'cid_result' => $resultCompound->cid,
-                        'createdat'  => now(),
-                    ]);
-                }
-
-                $this->addToRoom($roid, $resultCompound->cid);
-
-                return ['compound' => $resultCompound, 'is_first_discovery' => $isFirstDiscovery];
-            });
-
-            return response()->json([
-                'success'         => true,
-                'result'          => $this->formatRow($result['compound']),
-                'is_new'          => true,
-                'new_in_room'     => true,
-                'first_discovery' => $result['is_first_discovery'],
-            ]);
-
-        } catch (\Throwable $e) {
-            Log::error('GameController@combine: save error', ['message' => $e->getMessage()]);
-            return response()->json(['success' => false, 'message' => 'Internal error while saving.'], 500);
-        }
+        Cache::forget($cacheKey);
+        return response()->json($result);
     }
 
     // ── Elementi della room (AJAX + polling) ─────────────────────
@@ -353,6 +362,66 @@ class GameController extends Controller
     }
 
     // ── Helper privati ───────────────────────────────────────────
+
+    /**
+     * Save compound + recipe and return JSON response (or array if returnArray=true).
+     */
+    private function saveAndRespond(int $cidA, int $cidB, array $generated, int $roid, int $uid, bool $returnArray = false): JsonResponse|array
+    {
+        try {
+            $result = DB::transaction(function () use ($cidA, $cidB, $generated, $roid, $uid) {
+                $existing = DB::table('compounds')
+                    ->whereRaw('LOWER(name) = ?', [strtolower($generated['name'])])
+                    ->first();
+
+                $isFirstDiscovery = false;
+
+                if ($existing) {
+                    $resultCompound = $existing;
+                } else {
+                    $newCid = DB::table('compounds')->insertGetId([
+                        'name'                 => $generated['name'],
+                        'emoji'                => $generated['emoji'],
+                        'discoveredat'         => now(),
+                        'first_discoverer_uid' => $uid,
+                    ], 'cid');
+                    $resultCompound   = DB::table('compounds')->where('cid', $newCid)->first();
+                    $isFirstDiscovery = true;
+                }
+
+                $recipeExists = DB::table('recipes')
+                    ->where('cid_a', $cidA)->where('cid_b', $cidB)->exists();
+
+                if (! $recipeExists) {
+                    DB::table('recipes')->insert([
+                        'cid_a'      => $cidA,
+                        'cid_b'      => $cidB,
+                        'cid_result' => $resultCompound->cid,
+                        'createdat'  => now(),
+                    ]);
+                }
+
+                $this->addToRoom($roid, $resultCompound->cid);
+
+                return ['compound' => $resultCompound, 'is_first_discovery' => $isFirstDiscovery];
+            });
+
+            $payload = [
+                'success'         => true,
+                'result'          => $this->formatRow($result['compound']),
+                'is_new'          => true,
+                'new_in_room'     => true,
+                'first_discovery' => $result['is_first_discovery'],
+            ];
+
+            return $returnArray ? $payload : response()->json($payload);
+
+        } catch (\Throwable $e) {
+            Log::error('GameController@saveAndRespond: error', ['message' => $e->getMessage()]);
+            $payload = ['success' => false, 'message' => 'Internal error while saving.'];
+            return $returnArray ? $payload : response()->json($payload, 500);
+        }
+    }
 
     private function addToRoom(int $roid, int $cid): bool
     {

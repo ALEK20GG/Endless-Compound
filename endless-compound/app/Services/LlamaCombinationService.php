@@ -39,8 +39,8 @@ class LlamaCombinationService
             return null;
         }
 
-        // Extend PHP time limit for this request (LLaMA can take 15-20s)
-        set_time_limit(120);
+        // Extend PHP time limit — models can take 30-60s
+        set_time_limit(180);
 
         $prompt = $this->buildPrompt($elementA, $elementB);
 
@@ -76,39 +76,28 @@ class LlamaCombinationService
     // ── HTTP con retry su 429 ────────────────────────────────────
 
     /**
-     * Fallback models tried in order when the primary is rate-limited.
-     * All are free on OpenRouter.
-     */
-    /**
-     * Fallback models in priority order:
-     * - Low-traffic / less congested models first
-     * - Higher-traffic popular models as last resort
+     * Fallback models in priority order — tested and ranked by output quality.
+     * Only models that consistently return "EMOJI Name" format are included.
      */
     private array $fallbackModels = [
-        // Low traffic, consistently available
+        // Tier 1: best quality, correct format
+        'openai/gpt-oss-120b:free',
+        'openai/gpt-oss-20b:free',
         'nvidia/nemotron-nano-12b-v2-vl:free',
-        'nvidia/nemotron-3-nano-30b-a3b:free',
-        'nvidia/nemotron-3-super-120b-a12b:free',
-        'liquid/lfm-2.5-1.2b-instruct:free',
-        'liquid/lfm-2.5-1.2b-thinking:free',
-        'poolside/laguna-xs.2:free',
-        'poolside/laguna-m.1:free',
+        // Tier 2: rate-limited but good when available
         'google/gemma-4-26b-a4b-it:free',
         'google/gemma-4-31b-it:free',
         'z-ai/glm-4.5-air:free',
-        'openai/gpt-oss-20b:free',
-        'openai/gpt-oss-120b:free',
-        // Higher traffic, use as last resort
-        'meta-llama/llama-3.2-3b-instruct:free',
         'meta-llama/llama-3.3-70b-instruct:free',
+        'meta-llama/llama-3.2-3b-instruct:free',
     ];
 
     private function callWithRetry(string $prompt, int $maxAttempts = 2): ?\Illuminate\Http\Client\Response
     {
         $models = array_unique(array_merge([$this->model], $this->fallbackModels));
 
-        // Try each model once — no sleep, no retry loops
-        // 429 = rate limited, skip to next; 200 = success; else = skip
+        // Try each model once — no sleep between models
+        // Skip on 429/404/502, return on 200 with non-empty content
         foreach ($models as $model) {
             try {
                 $response = Http::withToken($this->apiKey)
@@ -116,7 +105,7 @@ class LlamaCombinationService
                         'HTTP-Referer' => config('app.url'),
                         'X-Title'      => config('app.name'),
                     ])
-                    ->timeout(25)
+                    ->timeout(60)
                     ->post($this->endpoint, [
                         'model'       => $model,
                         'messages'    => [
@@ -128,7 +117,13 @@ class LlamaCombinationService
                     ]);
 
                 if ($response->status() === 200) {
-                    return $response;
+                    $content = trim($response->json('choices.0.message.content', ''));
+                    if ($content !== '') {
+                        return $response;
+                    }
+                    // Empty response — try next model
+                    Log::warning('LlamaCombinationService: empty response, trying next', ['model' => $model]);
+                    continue;
                 }
 
                 Log::warning('LlamaCombinationService: model skipped', [

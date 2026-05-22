@@ -8,13 +8,14 @@ const state = {
     sidebarCids:      new Set(),
     combineUrl:       '',
     elementsUrl:      '',
+    pollUrl:          '',
     roid:             0,
     isMultiplayer:    false,
     lastUpdated:      null,
     currentUid:       0,
     nextId:           1,
     combining:        false,
-    sidebarDragGhost: null,   // id of the ghost item created on sidebar dragstart
+    sidebarDragGhost: null,
 };
 const ownDiscoveries = new Set();
 
@@ -24,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!board) return;
     state.combineUrl    = board.dataset.combineUrl;
     state.elementsUrl   = board.dataset.elementsUrl;
+    state.pollUrl       = board.dataset.pollUrl ?? '';
     state.roid          = parseInt(board.dataset.roid, 10);
     state.isMultiplayer = board.dataset.multiplayer === 'true';
     state.currentUid    = parseInt(board.dataset.uid ?? '0', 10);
@@ -286,6 +288,21 @@ const localAI = (() => {
 })();
 
 // ── Combine ───────────────────────────────────────────────────────
+/** Poll the server until the async combine job is done */
+async function pollCombineResult(jobId, maxAttempts = 40) {
+    const pollBase = state.pollUrl ?? state.combineUrl.replace('/combine', '/combine/poll');
+    for (let i = 0; i < maxAttempts; i++) {
+        await sleep(2000);
+        try {
+            const res  = await apiFetch(`${pollBase}/${jobId}`, 'GET');
+            if (res.status === 404) return null; // job expired
+            const data = await res.json();
+            if (!data.pending) return data; // done (success or error)
+        } catch { /* retry */ }
+    }
+    return null; // timeout
+}
+
 async function doCombine(nameA, nameB, x, y) {
     if (state.combining) return;
     state.combining = true;
@@ -300,7 +317,15 @@ async function doCombine(nameA, nameB, x, y) {
             state.combining = false; return;
         }
         const res  = await apiFetch(state.combineUrl, 'POST', { roid: state.roid, element_a: nameA, element_b: nameB });
-        const data = await res.json();
+        let data = await res.json();
+
+        // Async job: poll until done
+        if (data.pending && data.job_id) {
+            showToast('⏳ Generating…', 'info');
+            data = await pollCombineResult(data.job_id);
+            if (!data) { showToast('Combination failed. Please try again.', 'error'); state.combining = false; return; }
+        }
+
         if (!data.success) { showToast(data.message ?? 'Combination failed', 'error'); state.combining = false; return; }
         const result = data.result;
         spawnBoardItem(result.name, result.emoji, result.cid, x, y);

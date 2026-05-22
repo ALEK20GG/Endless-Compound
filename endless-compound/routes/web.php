@@ -36,6 +36,7 @@ Route::get('/game', [GameController::class, 'startSolo'])
 // Endpoints AJAX — devono stare PRIMA di /game/{roid} per non essere catturati dal parametro
 Route::middleware('auth')->group(function () {
     Route::post('/game/combine', [GameController::class, 'combine'])->name('game.combine');
+    Route::get('/game/combine/poll/{jobId}', [GameController::class, 'combinePoll'])->name('game.combine.poll');
     Route::get('/game/elements', [GameController::class, 'elements'])->name('game.elements');
     Route::post('/game/multiplayer/create', [GameController::class, 'createMultiplayer'])->name('game.multiplayer.create');
     Route::post('/game/multiplayer/join', [GameController::class, 'joinMultiplayer'])->name('game.multiplayer.join');

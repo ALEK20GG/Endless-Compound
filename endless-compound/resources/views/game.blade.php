@@ -57,6 +57,7 @@
           class="flex-1 relative overflow-hidden bg-gray-950 select-none"
           data-combine-url="{{ route('game.combine') }}"
           data-elements-url="{{ route('game.elements') }}"
+          data-poll-url="{{ url('/game/combine/poll') }}"
           data-roid="{{ $room->roid }}"
           data-multiplayer="{{ $isMultiplayer ? 'true' : 'false' }}"
           data-uid="{{ auth()->id() }}"
