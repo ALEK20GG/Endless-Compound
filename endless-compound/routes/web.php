@@ -40,6 +40,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/game/elements', [GameController::class, 'elements'])->name('game.elements');
     Route::post('/game/multiplayer/create', [GameController::class, 'createMultiplayer'])->name('game.multiplayer.create');
     Route::post('/game/multiplayer/join', [GameController::class, 'joinMultiplayer'])->name('game.multiplayer.join');
+    Route::post('/game/multiplayer/invite', [GameController::class, 'sendInvite'])->name('game.multiplayer.invite');
 });
 
 // Gioco in una room specifica — DOPO le route statiche

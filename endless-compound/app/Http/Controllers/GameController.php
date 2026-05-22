@@ -348,6 +348,46 @@ class GameController extends Controller
         return $response;
     }
 
+    // ── Invite via email ─────────────────────────────────────────
+
+    /**
+     * POST /game/multiplayer/invite
+     * Body: { roid, email }
+     */
+    public function sendInvite(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $data = $request->validate([
+            'roid'  => ['required', 'integer'],
+            'email' => ['required', 'email', 'max:255'],
+        ]);
+
+        $uid  = auth()->id();
+        $roid = (int) $data['roid'];
+
+        $room = DB::table('rooms')->where('roid', $roid)->where('owner_uid', $uid)->first();
+        if (! $room || ! $room->code) {
+            return response()->json(['success' => false, 'message' => 'Room not found or not yours.'], 403);
+        }
+
+        $inviter = auth()->user();
+        $joinUrl = route('dashboard') . '?join=' . $room->code;
+
+        try {
+            \Illuminate\Support\Facades\Mail::to($data['email'])
+                ->send(new \App\Mail\RoomInviteMail(
+                    inviterName: $inviter->username,
+                    roomName:    $room->name,
+                    roomCode:    $room->code,
+                    joinUrl:     $joinUrl,
+                ));
+
+            return response()->json(['success' => true, 'message' => 'Invite sent!']);
+        } catch (\Throwable $e) {
+            Log::error('sendInvite: mail failed', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Failed to send email.'], 500);
+        }
+    }
+
     // ── Elementi della room (AJAX + polling) ─────────────────────
 
     /**

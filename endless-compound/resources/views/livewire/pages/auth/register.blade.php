@@ -1,9 +1,11 @@
 <?php
 
 use App\Models\User;
+use App\Mail\WelcomeMail;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\Rules;
 
 use function Livewire\Volt\layout;
@@ -38,6 +40,13 @@ $register = function () {
     event(new Registered($user));
 
     Auth::login($user);
+
+    // Send welcome email (best-effort — don't block registration if mail fails)
+    try {
+        Mail::to($user->email)->send(new WelcomeMail($user->username));
+    } catch (\Throwable $e) {
+        \Illuminate\Support\Facades\Log::warning('Welcome email failed', ['error' => $e->getMessage()]);
+    }
 
     $this->redirect(route('dashboard', absolute: false), navigate: true);
 };

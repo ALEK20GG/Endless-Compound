@@ -54,6 +54,13 @@ class GoogleAuthController extends Controller
             ], 'uid');
 
             $authUser = \App\Models\User::find($uid);
+
+            // Send welcome email for new Google users
+            try {
+                \Illuminate\Support\Facades\Mail::to($email)->send(new \App\Mail\WelcomeMail($name));
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Welcome email failed (Google)', ['error' => $e->getMessage()]);
+            }
         }
 
         if (! $authUser) {
