@@ -105,19 +105,18 @@ class LlamaCombinationService
 
     private function callWithRetry(string $prompt, int $maxAttempts = 2): ?\Illuminate\Http\Client\Response
     {
-        // Build model list: configured model first, then fallbacks (deduped)
         $models = array_unique(array_merge([$this->model], $this->fallbackModels));
 
-        // On Render, keep total time under 25s to avoid request timeout
-        // Each model gets max 20s, only 1 retry round
-        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
-            foreach ($models as $model) {
+        // Try each model once — no sleep, no retry loops
+        // 429 = rate limited, skip to next; 200 = success; else = skip
+        foreach ($models as $model) {
+            try {
                 $response = Http::withToken($this->apiKey)
                     ->withHeaders([
                         'HTTP-Referer' => config('app.url'),
                         'X-Title'      => config('app.name'),
                     ])
-                    ->timeout(20)
+                    ->timeout(25)
                     ->post($this->endpoint, [
                         'model'       => $model,
                         'messages'    => [
@@ -132,30 +131,20 @@ class LlamaCombinationService
                     return $response;
                 }
 
-                if ($response->status() === 429) {
-                    Log::warning('LlamaCombinationService: rate limited, trying next model', [
-                        'model'   => $model,
-                        'attempt' => $attempt,
-                    ]);
-                    continue;
-                }
-
-                // 404 or other error — skip this model entirely
-                Log::warning('LlamaCombinationService: model unavailable, skipping', [
+                Log::warning('LlamaCombinationService: model skipped', [
                     'model'  => $model,
                     'status' => $response->status(),
                 ]);
-            }
 
-            // All models rate-limited — short wait before retry
-            if ($attempt < $maxAttempts - 1) {
-                $wait = 5;
-                Log::warning("LlamaCombinationService: all models busy, waiting {$wait}s before retry");
-                sleep($wait);
+            } catch (\Throwable $e) {
+                Log::warning('LlamaCombinationService: model exception', [
+                    'model'   => $model,
+                    'message' => $e->getMessage(),
+                ]);
             }
         }
 
-        Log::error('LlamaCombinationService: all models failed after all attempts');
+        Log::error('LlamaCombinationService: all models failed');
         return null;
     }
 
