@@ -1,35 +1,36 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
-        Schema::create('cache', function (Blueprint $table) {
-            $table->string('key')->primary();
-            $table->mediumText('value');
-            $table->integer('expiration')->index();
-        });
+        DB::statement("
+            CREATE TABLE IF NOT EXISTS cache (
+                key        varchar(255) NOT NULL,
+                value      text         NOT NULL,
+                expiration integer      NOT NULL,
+                CONSTRAINT cache_pkey PRIMARY KEY (key)
+            )
+        ");
 
-        Schema::create('cache_locks', function (Blueprint $table) {
-            $table->string('key')->primary();
-            $table->string('owner');
-            $table->integer('expiration')->index();
-        });
+        DB::statement("CREATE INDEX IF NOT EXISTS cache_expiration_index ON cache (expiration)");
+
+        DB::statement("
+            CREATE TABLE IF NOT EXISTS cache_locks (
+                key        varchar(255) NOT NULL,
+                owner      varchar(255) NOT NULL,
+                expiration integer      NOT NULL,
+                CONSTRAINT cache_locks_pkey PRIMARY KEY (key)
+            )
+        ");
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
-        Schema::dropIfExists('cache');
-        Schema::dropIfExists('cache_locks');
+        DB::statement("DROP TABLE IF EXISTS cache");
+        DB::statement("DROP TABLE IF EXISTS cache_locks");
     }
 };

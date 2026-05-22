@@ -1,49 +1,47 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
     /**
-     * Run the migrations.
+     * Our users table is managed manually in Supabase.
+     * This migration is a no-op — it only creates auxiliary tables
+     * that Laravel needs (password_reset_tokens, sessions) if they don't exist.
      */
     public function up(): void
     {
-        Schema::create('users', function (Blueprint $table) {
-            $table->id();
-            $table->string('name');
-            $table->string('email')->unique();
-            $table->timestamp('email_verified_at')->nullable();
-            $table->string('password');
-            $table->rememberToken();
-            $table->timestamps();
-        });
+        // password_reset_tokens — needed by Laravel auth
+        DB::statement("
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                email       varchar(255) NOT NULL,
+                token       varchar(255) NOT NULL,
+                created_at  timestamp    NULL,
+                CONSTRAINT password_reset_tokens_pkey PRIMARY KEY (email)
+            )
+        ");
 
-        Schema::create('password_reset_tokens', function (Blueprint $table) {
-            $table->string('email')->primary();
-            $table->string('token');
-            $table->timestamp('created_at')->nullable();
-        });
+        // sessions — needed if SESSION_DRIVER=database
+        DB::statement("
+            CREATE TABLE IF NOT EXISTS sessions (
+                id            varchar(255) NOT NULL,
+                user_id       bigint       NULL,
+                ip_address    varchar(45)  NULL,
+                user_agent    text         NULL,
+                payload       text         NOT NULL,
+                last_activity integer      NOT NULL,
+                CONSTRAINT sessions_pkey PRIMARY KEY (id)
+            )
+        ");
 
-        Schema::create('sessions', function (Blueprint $table) {
-            $table->string('id')->primary();
-            $table->foreignId('user_id')->nullable()->index();
-            $table->string('ip_address', 45)->nullable();
-            $table->text('user_agent')->nullable();
-            $table->longText('payload');
-            $table->integer('last_activity')->index();
-        });
+        DB::statement("CREATE INDEX IF NOT EXISTS sessions_user_id_index ON sessions (user_id)");
+        DB::statement("CREATE INDEX IF NOT EXISTS sessions_last_activity_index ON sessions (last_activity)");
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
-        Schema::dropIfExists('users');
-        Schema::dropIfExists('password_reset_tokens');
-        Schema::dropIfExists('sessions');
+        DB::statement("DROP TABLE IF EXISTS password_reset_tokens");
+        DB::statement("DROP TABLE IF EXISTS sessions");
     }
 };

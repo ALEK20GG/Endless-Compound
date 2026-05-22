@@ -313,39 +313,31 @@ class GameController extends Controller
             return response()->json(['success' => false, 'message' => $job['message']], 503);
         }
 
-        // Status 'pending' — mark as processing to prevent duplicate runs
-        Cache::put($cacheKey, array_merge($job, ['status' => 'processing']), 300);
-
-        // Close HTTP connection immediately, then run LLM in background
-        // This prevents Apache/Render from timing out the request
-        $response = response()->json(['pending' => true, 'job_id' => $jobId]);
-        $response->send();
-
-        if (function_exists('fastcgi_finish_request')) {
-            fastcgi_finish_request();
+        // Status 'pending' or 'processing' — run LLM synchronously
+        // Mark as processing to prevent duplicate runs from concurrent polls
+        if ($job['status'] === 'pending') {
+            Cache::put($cacheKey, array_merge($job, ['status' => 'processing']), 300);
+        } elseif ($job['status'] === 'processing') {
+            // Another poll is already running — tell client to wait
+            return response()->json(['pending' => true, 'job_id' => $jobId]);
         }
 
-        // Now run the LLM call (connection is already closed)
-        set_time_limit(180);
+        set_time_limit(0);
         ignore_user_abort(true);
 
-        try {
-            $generated = $this->llama->combine($job['nameA'], $job['nameB']);
+        $generated = $this->llama->combine($job['nameA'], $job['nameB']);
 
-            if (! $generated) {
-                Cache::put($cacheKey, ['status' => 'error', 'message' => 'Unable to generate combination right now.'], 300);
-                return $response;
-            }
-
-            $result = $this->saveAndRespond($job['cidA'], $job['cidB'], $generated, $job['roid'], $job['uid'], returnArray: true);
-            Cache::put($cacheKey, array_merge(['status' => 'done'], ['result' => $result]), 300);
-
-        } catch (\Throwable $e) {
-            Log::error('combinePoll: LLM error', ['message' => $e->getMessage()]);
-            Cache::put($cacheKey, ['status' => 'error', 'message' => 'Internal error.'], 300);
+        if (! $generated) {
+            Cache::forget($cacheKey);
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to generate combination right now. Please try again.',
+            ], 503);
         }
 
-        return $response;
+        $result = $this->saveAndRespond($job['cidA'], $job['cidB'], $generated, $job['roid'], $job['uid'], returnArray: true);
+        Cache::forget($cacheKey);
+        return response()->json($result);
     }
 
     // ── Invite via email ─────────────────────────────────────────

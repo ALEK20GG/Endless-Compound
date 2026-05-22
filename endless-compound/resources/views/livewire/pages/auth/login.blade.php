@@ -15,13 +15,13 @@ $login = function () {
 
     $this->form->authenticate();
 
-    Session::regenerate();
-
-    // If 2FA is required, redirect to verification page
+    // If 2FA is required, redirect to verification page (no session regenerate needed)
     if ($this->form->requiresTwoFactor) {
         $this->redirect(route('2fa.show'), navigate: false);
         return;
     }
+
+    Session::regenerate();
 
     $this->redirectIntended(default: route('dashboard', absolute: false), navigate: true);
 };
