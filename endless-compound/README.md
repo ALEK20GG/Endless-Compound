@@ -1,59 +1,97 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Endless Compound — Laravel App
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Applicazione Laravel 12 per il gioco Endless Compound. Vedi il [README principale](../README.md) per la descrizione completa del progetto.
 
-## About Laravel
+## Requisiti
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- PHP 8.2+
+- Node.js 20+
+- Composer
+- Connessione a un database PostgreSQL (Supabase)
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Configurazione
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Copia `.env.example` in `.env` e compila le variabili:
 
-## Learning Laravel
+```env
+APP_KEY=           # generata con php artisan key:generate
+APP_URL=           # es. http://localhost
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+DB_CONNECTION=supabase
+DB_HOST=           # host Supabase
+DB_PORT=5432
+DB_DATABASE=postgres
+DB_USERNAME=       # username Supabase
+DB_PASSWORD=       # password Supabase
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+SESSION_DRIVER=database
+CACHE_STORE=database
 
-## Laravel Sponsors
+MAIL_MAILER=smtp   # in locale: Gmail SMTP
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USERNAME=     # tua email Gmail
+MAIL_PASSWORD=     # App Password Gmail
+MAIL_ENCRYPTION=tls
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+LLAMA_ENDPOINT=https://openrouter.ai/api/v1/chat/completions
+LLAMA_API_KEY=     # chiave OpenRouter
+LLAMA_MODEL=openai/gpt-oss-120b:free
 
-### Premium Partners
+GOOGLE_CLIENT_ID=      # Google OAuth client ID
+GOOGLE_CLIENT_SECRET=  # Google OAuth client secret
+GOOGLE_REDIRECT_URI=   # es. http://localhost/auth/google/callback
+```
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+## Installazione
 
-## Contributing
+```bash
+composer install
+npm install && npm run build
+php artisan key:generate
+php artisan migrate
+php artisan serve
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## Test
 
-## Code of Conduct
+```bash
+php artisan test
+# oppure con output dettagliato:
+php artisan test --verbose
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+I test usano SQLite in-memory (`DB_CONNECTION=sqlite`, `DB_DATABASE=:memory:`) configurato in `phpunit.xml`. Non richiedono connessione a Supabase.
 
-## Security Vulnerabilities
+### Suite di test
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+| File | Cosa testa |
+|---|---|
+| `tests/Feature/AuthTest.php` | Registrazione, login, logout, protezione route |
+| `tests/Feature/GameTest.php` | Combine, accesso room, rate limiting, elementi |
+| `tests/Feature/ProfileTest.php` | Aggiornamento profilo, sanificazione input, leaderboard |
+| `tests/Unit/LlamaCombinationServiceTest.php` | Parser risposta LLM |
 
-## License
+## Deploy (Render)
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Il `Dockerfile` nella root del progetto gestisce il build. Le variabili d'ambiente vanno configurate nel pannello Render:
+
+```
+APP_ENV=production
+APP_DEBUG=false
+APP_URL=https://tuo-app.onrender.com
+SESSION_DRIVER=database
+CACHE_STORE=database
+MAIL_MAILER=log    # nessuna mail in produzione
+```
+
+## Tecnologie utilizzate
+
+- **Laravel 12** — framework PHP MVC
+- **Livewire / Volt** — componenti reattivi server-side
+- **Tailwind CSS + Vite** — styling e build assets
+- **Supabase (PostgreSQL)** — database relazionale
+- **OpenRouter API** — generazione combinazioni via LLM
+- **Laravel Socialite** — Google OAuth
+- **Pest** — framework di testing
+- **Docker** — containerizzazione per il deploy

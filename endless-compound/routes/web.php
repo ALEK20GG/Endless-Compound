@@ -57,14 +57,26 @@ Route::middleware('auth')->group(function () {
     Route::delete('/profile/room/{roid}', [ProfileController::class, 'leaveRoom'])->name('profile.room.leave');
 });
 
+// Leaderboard — pubblica
+Route::get('/leaderboard', [GameController::class, 'leaderboard'])->name('leaderboard');
+
+// Preferenza tema (cookie)
+Route::post('/preferences/theme', function (\Illuminate\Http\Request $request) {
+    $theme = $request->input('theme') === 'light' ? 'light' : 'dark';
+    return response()->json(['ok' => true])
+        ->cookie('theme', $theme, 60 * 24 * 365); // 1 anno
+})->name('preferences.theme');
+
 // Google OAuth — definite QUI così la route 'auth.google' esiste sempre
 Route::get('/auth/google', [GoogleAuthController::class, 'redirectToGoogle'])->name('auth.google');
 Route::get('/auth/google/callback', [GoogleAuthController::class, 'handleGoogleCallback'])->name('auth.google.callback');
 
-// 2FA routes
-Route::get('/auth/two-factor', [TwoFactorController::class, 'show'])->name('2fa.show');
-Route::post('/auth/two-factor/send', [TwoFactorController::class, 'send'])->name('2fa.send');
-Route::post('/auth/two-factor/verify', [TwoFactorController::class, 'verify'])->name('2fa.verify');
+// 2FA routes — attive solo in locale per il flusso dev
+if (app()->environment('local')) {
+    Route::get('/auth/two-factor', [TwoFactorController::class, 'show'])->name('2fa.show');
+    Route::post('/auth/two-factor/send', [TwoFactorController::class, 'send'])->name('2fa.send');
+    Route::post('/auth/two-factor/verify', [TwoFactorController::class, 'verify'])->name('2fa.verify');
+}
 
 require __DIR__.'/auth.php';
 
@@ -74,30 +86,6 @@ if (app()->environment('local', 'production')) {
         return response('<pre>max_execution_time: ' . ini_get('max_execution_time') . "\n"
             . 'php_ini: ' . php_ini_loaded_file() . "\n"
             . 'php_version: ' . PHP_VERSION . '</pre>');
-    });
-
-    Route::get('/debug-mail', function () {
-        try {
-            \Illuminate\Support\Facades\Mail::raw('Test mail from Endless Compound - ' . now(), function ($msg) {
-                $msg->to(request()->query('to', 'test@example.com'))
-                    ->subject('Mail Test');
-            });
-            return response()->json([
-                'status' => 'ok',
-                'mailer' => config('mail.default'),
-                'host'   => config('mail.mailers.smtp.host'),
-                'port'   => config('mail.mailers.smtp.port'),
-                'from'   => config('mail.from.address'),
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'status'  => 'error',
-                'message' => $e->getMessage(),
-                'mailer'  => config('mail.default'),
-                'host'    => config('mail.mailers.smtp.host'),
-                'port'    => config('mail.mailers.smtp.port'),
-            ], 500);
-        }
     });
 
     Route::get('/debug-error', function () {

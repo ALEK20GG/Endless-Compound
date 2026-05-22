@@ -30,6 +30,41 @@
             </div>
         @endif
 
+        {{-- Stats --}}
+        <div class="grid grid-cols-2 gap-4">
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-center">
+                <div class="text-3xl font-bold text-indigo-400">{{ number_format($totalDiscoveries) }}</div>
+                <div class="text-xs text-gray-500 mt-1 uppercase tracking-wider">First discoveries</div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-center">
+                <div class="text-3xl font-bold text-indigo-400">{{ number_format($totalElements) }}</div>
+                <div class="text-xs text-gray-500 mt-1 uppercase tracking-wider">Elements unlocked</div>
+            </div>
+        </div>
+
+        {{-- Recent discoveries --}}
+        @if($recentDiscoveries->isNotEmpty())
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-3">
+            <div class="flex items-center justify-between">
+                <h2 class="text-lg font-semibold">Your Recent Discoveries</h2>
+                <a href="{{ route('leaderboard') }}" class="text-xs text-indigo-400 hover:text-indigo-300 transition">
+                    View leaderboard →
+                </a>
+            </div>
+            <ul class="space-y-2">
+                @foreach($recentDiscoveries as $compound)
+                    <li class="flex items-center gap-3 bg-gray-800 rounded-lg px-4 py-2.5">
+                        <span class="text-xl">{{ $compound->emoji }}</span>
+                        <span class="text-sm font-medium text-white flex-1">{{ e($compound->name) }}</span>
+                        <span class="text-xs text-gray-600">
+                            {{ \Carbon\Carbon::parse($compound->discoveredat)->diffForHumans() }}
+                        </span>
+                    </li>
+                @endforeach
+            </ul>
+        </div>
+        @endif
+
         {{-- Edit profile form --}}
         <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
             <h2 class="text-lg font-semibold">Edit Profile</h2>

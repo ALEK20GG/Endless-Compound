@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use App\Services\LlamaCombinationService;
 
@@ -210,6 +211,17 @@ class GameController extends Controller
         $uid  = auth()->id();
         $roid = (int) $data['roid'];
 
+        // ── Rate limiting: max 30 combine/minuto per utente ──────
+        $rateLimitKey = "combine_rate:{$uid}";
+        if (RateLimiter::tooManyAttempts($rateLimitKey, 30)) {
+            $seconds = RateLimiter::availableIn($rateLimitKey);
+            return response()->json([
+                'success' => false,
+                'message' => "Too many combinations. Please wait {$seconds}s.",
+            ], 429);
+        }
+        RateLimiter::hit($rateLimitKey, 60);
+
         // Verifica accesso alla room
         $room = DB::table('rooms')->where('roid', $roid)->first();
         if (! $room) {
@@ -384,6 +396,26 @@ class GameController extends Controller
             Log::error('sendInvite: mail failed', ['error' => $e->getMessage()]);
             return response()->json(['success' => false, 'message' => 'Failed to send email.'], 500);
         }
+    }
+
+    // ── Leaderboard ──────────────────────────────────────────────
+
+    /**
+     * GET /leaderboard
+     */
+    public function leaderboard(): \Illuminate\View\View
+    {
+        $leaders = DB::table('users')
+            ->leftJoin('compounds', 'compounds.first_discoverer_uid', '=', 'users.uid')
+            ->select('users.uid', 'users.username', DB::raw('COUNT(compounds.cid) as discoveries'))
+            ->groupBy('users.uid', 'users.username')
+            ->orderByDesc('discoveries')
+            ->limit(20)
+            ->get();
+
+        $totalCompounds = DB::table('compounds')->count();
+
+        return view('leaderboard', compact('leaders', 'totalCompounds'));
     }
 
     // ── Elementi della room (AJAX + polling) ─────────────────────

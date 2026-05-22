@@ -16,6 +16,9 @@ const state = {
     nextId:           1,
     combining:        false,
     sidebarDragGhost: null,
+    // Touch state
+    touchDrag:        null,   // { id, el, offX, offY, fromSidebar, name, emoji, cid }
+    touchClone:       null,   // visual clone following finger
 };
 const ownDiscoveries = new Set();
 
@@ -33,10 +36,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const myDisc = safeParseJson(board.dataset.myDiscoveries) ?? [];
     myDisc.forEach(cid => ownDiscoveries.add(Number(cid)));
     loadElements();
-    // Only use local AI in local dev — on production use server only
     if (board.dataset.localAi === 'true') localAI.init();
     initBoardDrop(board);
     initSidebarDrop();
+    initTouchHandlers();
     if (state.isMultiplayer) setInterval(pollNewElements, 3000);
 });
 
@@ -91,24 +94,37 @@ function makeSidebarItem(el) {
     li.innerHTML    = `<span class="item-emoji">${sanitize(el.emoji ?? '✨')}</span><span>${sanitize(el.name)}</span>`;
 
     li.addEventListener('dragstart', e => {
-        // Spawn a hidden board item immediately so board items can receive the drop
         const ghostId = spawnBoardItem(el.name, el.emoji ?? '✨', el.cid, -200, -200, false);
         state.sidebarDragGhost = ghostId;
-
         e.dataTransfer.setData('application/x-element', JSON.stringify({
             name: el.name, emoji: el.emoji ?? '✨', cid: el.cid,
-            from: 'board', id: ghostId,   // pretend it's a board item
+            from: 'board', id: ghostId,
         }));
         e.dataTransfer.effectAllowed = 'move';
     });
 
     li.addEventListener('dragend', () => {
-        // If the ghost was never consumed by a combine, remove it
         if (state.sidebarDragGhost) {
             removeBoardItem(state.sidebarDragGhost);
             state.sidebarDragGhost = null;
         }
     });
+
+    // Touch: drag from sidebar
+    li.addEventListener('touchstart', e => {
+        e.stopPropagation();
+        const touch = e.touches[0];
+        state.touchDrag = {
+            id: null,
+            fromSidebar: true,
+            name: el.name,
+            emoji: el.emoji ?? '✨',
+            cid: el.cid,
+            offX: 0,
+            offY: 0,
+        };
+        createTouchClone(el.emoji ?? '✨', el.name, touch.clientX, touch.clientY);
+    }, { passive: true });
 
     return li;
 }
@@ -123,44 +139,27 @@ function addToSidebar(el) {
     count.textContent = state.sidebarCids.size;
 }
 
-// ── Board drop (empty area + sidebar→item combine) ───────────────
+// ── Board drop ────────────────────────────────────────────────────
 function initBoardDrop(board) {
     board.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
     board.addEventListener('drop', e => {
         e.preventDefault();
         const payload = safeParseJson(e.dataTransfer.getData('application/x-element'));
         if (!payload) return;
-
         const rect = board.getBoundingClientRect();
         const x = e.clientX - rect.left, y = e.clientY - rect.top;
-
         if (payload.from === 'board') {
             const item = state.boardItems.get(payload.id);
             if (item) {
-                // Reposition (move or place ghost from sidebar)
                 item.el.style.left = `${x - 50}px`;
                 item.el.style.top  = `${y - 18}px`;
-                // Ghost was placed on empty board — keep it, clear ghost ref
-                if (state.sidebarDragGhost === payload.id) {
-                    state.sidebarDragGhost = null;
-                }
+                if (state.sidebarDragGhost === payload.id) state.sidebarDragGhost = null;
             }
         }
     });
 }
 
-/** findBoardItemAt kept for reference but no longer used */
-function findBoardItemAt(clientX, clientY) {
-    for (const [, item] of state.boardItems) {
-        const r = item.el.getBoundingClientRect();
-        if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-            return item;
-        }
-    }
-    return null;
-}
-
-// ── Sidebar drop (drag board item back → remove) ──────────────────
+// ── Sidebar drop ──────────────────────────────────────────────────
 function initSidebarDrop() {
     const sidebar = document.getElementById('sidebar');
     if (!sidebar) return;
@@ -170,6 +169,102 @@ function initSidebarDrop() {
         const payload = safeParseJson(e.dataTransfer.getData('application/x-element'));
         if (payload?.from === 'board') removeBoardItem(payload.id);
     });
+}
+
+// ── Touch handlers ────────────────────────────────────────────────
+function initTouchHandlers() {
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend',  onTouchEnd,  { passive: true });
+    document.addEventListener('touchcancel', cancelTouchDrag, { passive: true });
+}
+
+function createTouchClone(emoji, name, clientX, clientY) {
+    removeTouchClone();
+    const clone = document.createElement('div');
+    clone.className = 'board-item dragging';
+    clone.style.position = 'fixed';
+    clone.style.zIndex   = '9999';
+    clone.style.pointerEvents = 'none';
+    clone.style.opacity  = '0.85';
+    clone.innerHTML = `<span class="item-emoji">${sanitize(emoji)}</span><span>${sanitize(name)}</span>`;
+    positionTouchClone(clone, clientX, clientY);
+    document.body.appendChild(clone);
+    state.touchClone = clone;
+}
+
+function positionTouchClone(clone, clientX, clientY) {
+    clone.style.left = `${clientX - 50}px`;
+    clone.style.top  = `${clientY - 18}px`;
+}
+
+function removeTouchClone() {
+    if (state.touchClone) { state.touchClone.remove(); state.touchClone = null; }
+}
+
+function onTouchMove(e) {
+    if (!state.touchDrag) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    if (state.touchClone) positionTouchClone(state.touchClone, touch.clientX, touch.clientY);
+    if (state.touchDrag.id) {
+        const item = state.boardItems.get(state.touchDrag.id);
+        if (item) {
+            const board = document.getElementById('board');
+            const bRect = board.getBoundingClientRect();
+            item.el.style.left = `${touch.clientX - bRect.left - state.touchDrag.offX}px`;
+            item.el.style.top  = `${touch.clientY - bRect.top  - state.touchDrag.offY}px`;
+        }
+    }
+}
+
+function onTouchEnd(e) {
+    if (!state.touchDrag) return;
+    const touch = e.changedTouches[0];
+    removeTouchClone();
+    const board = document.getElementById('board');
+    const bRect = board.getBoundingClientRect();
+    const onBoard = touch.clientX >= bRect.left && touch.clientX <= bRect.right &&
+                    touch.clientY >= bRect.top  && touch.clientY <= bRect.bottom;
+    if (!onBoard) {
+        if (state.touchDrag.id) removeBoardItem(state.touchDrag.id);
+        state.touchDrag = null;
+        return;
+    }
+    const dropX = touch.clientX - bRect.left;
+    const dropY = touch.clientY - bRect.top;
+    const targetEntry = findBoardItemAtClient(touch.clientX, touch.clientY, state.touchDrag.id);
+    if (targetEntry) {
+        const cx = targetEntry.el.getBoundingClientRect().left - bRect.left + targetEntry.el.offsetWidth / 2;
+        const cy = targetEntry.el.getBoundingClientRect().top  - bRect.top  + targetEntry.el.offsetHeight / 2;
+        if (state.touchDrag.id) removeBoardItem(state.touchDrag.id);
+        targetEntry.el.classList.add('merging');
+        const dragName = state.touchDrag.name;
+        const targetId = targetEntry.id;
+        setTimeout(() => { removeBoardItem(targetId); doCombine(dragName, targetEntry.name, cx, cy); }, 200);
+    } else {
+        if (state.touchDrag.fromSidebar) {
+            spawnBoardItem(state.touchDrag.name, state.touchDrag.emoji, state.touchDrag.cid, dropX, dropY);
+        } else if (state.touchDrag.id) {
+            const item = state.boardItems.get(state.touchDrag.id);
+            if (item) { item.el.style.left = `${dropX - 50}px`; item.el.style.top = `${dropY - 18}px`; }
+        }
+    }
+    state.touchDrag = null;
+}
+
+function cancelTouchDrag() {
+    removeTouchClone();
+    if (state.touchDrag?.id) removeBoardItem(state.touchDrag.id);
+    state.touchDrag = null;
+}
+
+function findBoardItemAtClient(clientX, clientY, excludeId = null) {
+    for (const [id, item] of state.boardItems) {
+        if (id === excludeId) continue;
+        const r = item.el.getBoundingClientRect();
+        if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) return item;
+    }
+    return null;
 }
 
 // ── Board items ───────────────────────────────────────────────────
@@ -203,13 +298,7 @@ function spawnBoardItem(name, emoji, cid, x, y, animate = true) {
             el.style.left = `${nx - 50}px`; el.style.top = `${ny - 18}px`;
         }
     });
-
-    el.addEventListener('dragover', e => {
-        e.preventDefault();
-        e.stopPropagation();
-        // Accept both board items and sidebar items
-        e.dataTransfer.dropEffect = 'move';
-    });
+    el.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; });
     el.addEventListener('drop', async e => {
         e.preventDefault(); e.stopPropagation();
         if (state.combining) return;
@@ -220,18 +309,13 @@ function spawnBoardItem(name, emoji, cid, x, y, animate = true) {
         const eRect = el.getBoundingClientRect();
         const cx = eRect.left - bRect.left + eRect.width / 2;
         const cy = eRect.top  - bRect.top  + eRect.height / 2;
-        // Remove the dragged item only if it came from the board
         if (payload.from === 'board') removeBoardItem(payload.id);
-        // Clear ghost ref if this was a sidebar drag
         if (state.sidebarDragGhost === payload.id) state.sidebarDragGhost = null;
-        // Remove this target item and combine
         el.classList.add('merging');
         await sleep(200);
         removeBoardItem(id);
         await doCombine(name, payload.name, cx, cy);
     });
-
-    // Double-click → duplicate
     el.addEventListener('dblclick', e => {
         e.stopPropagation();
         const board = document.getElementById('board');
@@ -239,9 +323,16 @@ function spawnBoardItem(name, emoji, cid, x, y, animate = true) {
         const eRect = el.getBoundingClientRect();
         spawnBoardItem(name, emoji, cid, eRect.left - bRect.left + 30, eRect.top - bRect.top + 30);
     });
-
-    // Right-click → remove
     el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); removeBoardItem(id); });
+    el.addEventListener('touchstart', e => {
+        e.stopPropagation();
+        const touch = e.touches[0];
+        const r = el.getBoundingClientRect();
+        state.touchDrag = { id, fromSidebar: false, name, emoji, cid, offX: touch.clientX - r.left, offY: touch.clientY - r.top };
+        createTouchClone(emoji, name, touch.clientX, touch.clientY);
+        el.style.opacity = '0.3';
+    }, { passive: true });
+    el.addEventListener('touchend', () => { el.style.opacity = ''; }, { passive: true });
 
     document.getElementById('board').appendChild(el);
     state.boardItems.set(id, { id, name, emoji, cid, el });
@@ -258,6 +349,11 @@ function updateBoardHint() {
     const hint = document.getElementById('board-hint');
     if (hint) hint.style.display = state.boardItems.size > 0 ? 'none' : '';
 }
+
+// Esposto per il pulsante "Clear board" nella navbar
+window._clearBoard = function() {
+    for (const [id] of [...state.boardItems]) removeBoardItem(id);
+};
 
 // ── Local AI ─────────────────────────────────────────────────────
 const localAI = (() => {
@@ -293,19 +389,18 @@ const localAI = (() => {
 })();
 
 // ── Combine ───────────────────────────────────────────────────────
-/** Poll the server until the async combine job is done */
 async function pollCombineResult(jobId, maxAttempts = 40) {
     const pollBase = state.pollUrl ?? state.combineUrl.replace('/combine', '/combine/poll');
     for (let i = 0; i < maxAttempts; i++) {
         await sleep(2000);
         try {
             const res  = await apiFetch(`${pollBase}/${jobId}`, 'GET');
-            if (res.status === 404) return null; // job expired
+            if (res.status === 404) return null;
             const data = await res.json();
-            if (!data.pending) return data; // done (success or error)
+            if (!data.pending) return data;
         } catch { /* retry */ }
     }
-    return null; // timeout
+    return null;
 }
 
 async function doCombine(nameA, nameB, x, y) {
@@ -324,22 +419,47 @@ async function doCombine(nameA, nameB, x, y) {
         const res  = await apiFetch(state.combineUrl, 'POST', { roid: state.roid, element_a: nameA, element_b: nameB });
         let data = await res.json();
 
-        // Async job: poll until done
+        if (res.status === 429) {
+            showToast(data.message ?? 'Too many combinations. Please slow down.', 'error');
+            state.combining = false; return;
+        }
+
         if (data.pending && data.job_id) {
             showToast('⏳ Generating…', 'info');
             data = await pollCombineResult(data.job_id);
-            if (!data) { showToast('Combination failed. Please try again.', 'error'); state.combining = false; return; }
+            if (!data) { showToast('Combination timed out. The AI might be busy — try again.', 'error'); state.combining = false; return; }
         }
 
-        if (!data.success) { showToast(data.message ?? 'Combination failed', 'error'); state.combining = false; return; }
+        if (!data.success) {
+            // Messaggio di errore più descrittivo
+            const msg = data.message ?? 'Combination failed';
+            const isServerDown = msg.toLowerCase().includes('unable') || msg.toLowerCase().includes('503') || res.status >= 500;
+            showToast(isServerDown ? '🤖 AI is busy right now. Try again in a moment.' : msg, 'error');
+            state.combining = false; return;
+        }
         const result = data.result;
         spawnBoardItem(result.name, result.emoji, result.cid, x, y);
         if (data.new_in_room && !state.sidebarCids.has(result.cid)) addToSidebar(result);
-        if (data.first_discovery) { ownDiscoveries.add(result.cid); showToast(`🏆 First world discovery: ${result.emoji} ${result.name}!`, 'first'); }
-        else if (data.new_in_room) showToast(`✨ New element: ${result.emoji} ${result.name}`, 'success');
-        else showToast(`${result.emoji} ${result.name}`, 'success');
+        if (data.first_discovery) {
+            ownDiscoveries.add(result.cid);
+            updateNavDiscoveryCount(1);
+            showToast(`🏆 First world discovery: ${result.emoji} ${result.name}!`, 'first');
+        } else if (data.new_in_room) {
+            showToast(`✨ New element: ${result.emoji} ${result.name}`, 'success');
+        } else {
+            showToast(`${result.emoji} ${result.name}`, 'success');
+        }
     } catch (e) { console.error('doCombine error:', e); showToast('Network error. Please try again.', 'error'); }
     state.combining = false;
+}
+
+function updateNavDiscoveryCount(delta) {
+    const numEl = document.getElementById('nav-discovery-num');
+    const badge = document.getElementById('nav-discovery-count');
+    if (!numEl || !badge) return;
+    const current = parseInt(numEl.textContent ?? '0') + delta;
+    numEl.textContent = current;
+    if (current > 0) badge.classList.remove('hidden');
 }
 
 function parseLocalResult(text) {
@@ -360,7 +480,7 @@ async function persistCombination(nameA, nameB, result) {
         if (data.success && data.result) {
             const r = data.result;
             if (!state.sidebarCids.has(r.cid)) addToSidebar(r);
-            if (data.first_discovery) ownDiscoveries.add(r.cid);
+            if (data.first_discovery) { ownDiscoveries.add(r.cid); updateNavDiscoveryCount(1); }
         }
     } catch {}
 }

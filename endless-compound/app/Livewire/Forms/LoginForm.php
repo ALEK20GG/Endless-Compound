@@ -52,28 +52,30 @@ class LoginForm extends Form
 
         RateLimiter::clear($this->throttleKey());
 
-        // ── 2FA via email ────────────────────────────────────────
-        // Salva l'utente in sessione come "pending 2FA" e invia OTP.
-        // Il login viene completato solo dopo la verifica del codice.
-        $userId = Auth::id();
-        Auth::logout(); // log out temporaneamente
+        // ── 2FA via email (solo in locale/dev) ───────────────────
+        if (app()->environment('local')) {
+            $userId = Auth::id();
+            Auth::logout();
 
-        Session::put('2fa_user_id', $userId);
-        Session::put('2fa_remember', $this->remember);
+            Session::put('2fa_user_id', $userId);
+            Session::put('2fa_remember', $this->remember);
 
-        // Genera e invia OTP
-        $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-        Cache::put("2fa_otp:{$userId}", $otp, 600);
+            $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+            Cache::put("2fa_otp:{$userId}", $otp, 600);
 
-        $user = \App\Models\User::find($userId);
-        try {
-            Mail::to($user->email)->send(new \App\Mail\TwoFactorMail($user->username, $otp));
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('2FA mail failed', ['error' => $e->getMessage()]);
+            $user = \App\Models\User::find($userId);
+            try {
+                Mail::to($user->email)->send(new \App\Mail\TwoFactorMail($user->username, $otp));
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('2FA mail failed', ['error' => $e->getMessage()]);
+            }
+
+            $this->requiresTwoFactor = true;
+            return;
         }
 
-        // Signal to the Livewire component that 2FA redirect is needed
-        $this->requiresTwoFactor = true;
+        // In produzione: login diretto, nessun 2FA
+        Session::regenerate();
     }
 
     /**

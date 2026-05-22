@@ -134,3 +134,57 @@
 .board-item.spawning {
     animation: spawn-in 0.2s ease-out;
 }
+
+/* ── Light theme ──────────────────────────────────────────────── */
+html.light-theme {
+    --bg-primary:   #f8fafc;
+    --bg-secondary: #f1f5f9;
+    --bg-card:      #ffffff;
+    --border:       #e2e8f0;
+    --text-primary: #0f172a;
+    --text-muted:   #64748b;
+}
+
+html.light-theme body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+html.light-theme nav,
+html.light-theme aside#sidebar {
+    background-color: var(--bg-card) !important;
+    border-color: var(--border) !important;
+}
+
+html.light-theme #board {
+    background-color: var(--bg-secondary) !important;
+}
+
+html.light-theme .board-item {
+    background: #ffffff;
+    border-color: #cbd5e1;
+    color: #1e293b;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+html.light-theme .board-item:hover {
+    border-color: #6366f1;
+}
+
+html.light-theme .sidebar-item {
+    color: #334155;
+}
+
+html.light-theme .sidebar-item:hover {
+    background: #f1f5f9;
+}
+
+html.light-theme #sidebar-search {
+    background: #f1f5f9 !important;
+    border-color: #e2e8f0 !important;
+    color: #0f172a !important;
+}
+
+html.light-theme #board-hint p {
+    color: #94a3b8;
+}

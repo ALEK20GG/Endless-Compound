@@ -15,18 +15,46 @@ class ProfileController extends Controller
         // Recent rooms: owned + joined via collabs_in
         $ownedRooms = DB::table('rooms')
             ->where('owner_uid', $user->uid)
-            ->where('maxplayers', '>', 1) // only multiplayer rooms
+            ->where('maxplayers', '>', 1)
             ->orderBy('createdat', 'desc')
             ->get(['roid', 'name', 'code', 'maxplayers', 'createdat']);
 
         $joinedRooms = DB::table('collabs_in')
             ->join('rooms', 'collabs_in.roid', '=', 'rooms.roid')
             ->where('collabs_in.uid', $user->uid)
-            ->where('rooms.owner_uid', '!=', $user->uid) // exclude own rooms
+            ->where('rooms.owner_uid', '!=', $user->uid)
             ->orderBy('collabs_in.joinedat', 'desc')
             ->get(['rooms.roid', 'rooms.name', 'rooms.code', 'rooms.maxplayers', 'collabs_in.joinedat']);
 
-        return view('profile', compact('user', 'ownedRooms', 'joinedRooms'));
+        // Stats
+        $totalDiscoveries   = DB::table('compounds')
+            ->where('first_discoverer_uid', $user->uid)
+            ->count();
+
+        $totalElements = DB::table('room_comps')
+            ->join('rooms', 'room_comps.roid', '=', 'rooms.roid')
+            ->where(function ($q) use ($user) {
+                $q->where('rooms.owner_uid', $user->uid)
+                  ->orWhereExists(function ($sub) use ($user) {
+                      $sub->select(DB::raw(1))
+                          ->from('collabs_in')
+                          ->whereColumn('collabs_in.roid', 'rooms.roid')
+                          ->where('collabs_in.uid', $user->uid);
+                  });
+            })
+            ->distinct('room_comps.cid')
+            ->count('room_comps.cid');
+
+        $recentDiscoveries = DB::table('compounds')
+            ->where('first_discoverer_uid', $user->uid)
+            ->orderBy('discoveredat', 'desc')
+            ->limit(5)
+            ->get(['name', 'emoji', 'discoveredat']);
+
+        return view('profile', compact(
+            'user', 'ownedRooms', 'joinedRooms',
+            'totalDiscoveries', 'totalElements', 'recentDiscoveries'
+        ));
     }
 
     public function update(Request $request)
@@ -38,7 +66,11 @@ class ProfileController extends Controller
             'password' => ['nullable', 'string', 'min:8', 'confirmed'],
         ]);
 
-        $updates = ['username' => trim(strip_tags($data['username']))];
+        // filter_var per sanificazione esplicita
+        $username = filter_var(trim($data['username']), FILTER_SANITIZE_SPECIAL_CHARS);
+        $username = strip_tags($username);
+
+        $updates = ['username' => $username];
 
         if (! empty($data['password'])) {
             $updates['password'] = Hash::make($data['password']);

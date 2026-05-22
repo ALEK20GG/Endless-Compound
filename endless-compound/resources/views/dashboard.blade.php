@@ -51,6 +51,10 @@
                    class="block w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 px-6 rounded-xl transition text-center">
                     Play now
                 </a>
+                <a href="{{ route('leaderboard') }}"
+                   class="block w-full bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium py-2 px-6 rounded-xl transition text-center border border-gray-700 text-sm">
+                    🏆 Leaderboard
+                </a>
                 <form method="POST" action="{{ route('logout') }}">
                     @csrf
                     <button type="submit"
@@ -66,6 +70,10 @@
                 <a href="{{ route('register') }}"
                    class="block w-full bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium py-3 px-6 rounded-xl transition text-center border border-gray-700">
                     Create an account
+                </a>
+                <a href="{{ route('leaderboard') }}"
+                   class="block w-full text-center text-sm text-gray-500 hover:text-gray-300 transition py-1">
+                    🏆 View leaderboard
                 </a>
                 @if(config('services.google.client_id'))
                 <a href="{{ route('auth.google') }}"
