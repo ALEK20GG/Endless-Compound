@@ -273,7 +273,12 @@ const localAI = (() => {
             else if (m.type === 'result') { pending.get(m.id)?.resolve(m.result); pending.delete(m.id); }
             else if (m.type === 'error')  { pending.get(m.id)?.reject(new Error(m.error)); pending.delete(m.id); }
         });
-        worker.addEventListener('error', () => { worker = null; ready = false; });
+        worker.addEventListener('error', (e) => {
+            console.warn('[LocalAI] Worker failed, falling back to server:', e.message ?? e);
+            worker = null; ready = false;
+            pending.forEach(({ resolve }) => resolve(null));
+            pending.clear();
+        });
     }
     function combine(a, b) {
         if (!worker) return Promise.resolve(null);
