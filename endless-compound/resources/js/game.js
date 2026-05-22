@@ -265,7 +265,7 @@ const localAI = (() => {
     const pending = new Map(); let reqId = 0;
     function init() {
         if (worker) return;
-        try { worker = new Worker(new URL('./combination-worker.js', import.meta.url), { type: 'module' }); }
+        try { worker = new Worker('/combination-worker.js', { type: 'module' }); }
         catch { worker = null; return; }
         worker.addEventListener('message', e => {
             const m = e.data;
