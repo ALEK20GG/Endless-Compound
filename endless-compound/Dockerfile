@@ -31,8 +31,7 @@ RUN sed -i 's|/var/www/html|/var/www/html/public|g' /etc/apache2/sites-available
     && a2enmod rewrite
 
 # Aumenta timeout Apache per le chiamate LLM lunghe
-RUN echo "Timeout 300" >> /etc/apache2/apache2.conf \
-    && echo "ProxyTimeout 300" >> /etc/apache2/apache2.conf
+RUN echo "Timeout 300" >> /etc/apache2/apache2.conf
 
 # Script di avvio
 COPY start.sh /start.sh
