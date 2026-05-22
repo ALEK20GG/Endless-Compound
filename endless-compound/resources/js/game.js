@@ -86,7 +86,7 @@ async function pollNewElements() {
         const data = await res.json();
         if (data.success && data.elements.length > 0) {
             data.elements.forEach(el => {
-                if (!state.sidebarCids.has(el.cid)) addToSidebar(el);
+                if (!state.sidebarCids.has(Number(el.cid))) addToSidebar(el);
                 // Notifica scoperta da altro giocatore
                 if (el.discoverer_username && el.discoverer_username !== state.currentUsername) {
                     showToast(`🔬 ${sanitize(el.discoverer_username)} discovered ${sanitize(el.emoji ?? '✨')} ${sanitize(el.name)}!`, 'info');
@@ -104,7 +104,7 @@ function renderSidebar(elements) {
     list.innerHTML = '';
     state.sidebarCids.clear();
     count.textContent = elements.length;
-    elements.forEach(el => { state.sidebarCids.add(el.cid); list.appendChild(makeSidebarItem(el)); });
+    elements.forEach(el => { state.sidebarCids.add(Number(el.cid)); list.appendChild(makeSidebarItem(el)); });
     const search = document.getElementById('sidebar-search');
     if (search && !search.dataset.wired) {
         search.dataset.wired = '1';
@@ -163,8 +163,8 @@ function makeSidebarItem(el) {
 }
 
 function addToSidebar(el) {
-    if (state.sidebarCids.has(el.cid)) return;
-    state.sidebarCids.add(el.cid);
+    if (state.sidebarCids.has(Number(el.cid))) return;
+    state.sidebarCids.add(Number(el.cid));
     const list = document.getElementById('element-list');
     const count = document.getElementById('element-count');
     if (!list) return;
@@ -539,32 +539,59 @@ function initKeyboardShortcuts() {
 }
 
 // ── Chat ──────────────────────────────────────────────────────────
+const shownMessageIds = new Set(); // deduplication guard
+let chatPolling = false; // prevent concurrent polls
+
 function toggleChat() {
     const panel = document.getElementById('chat-panel');
     if (!panel) return;
     state.chatOpen = !state.chatOpen;
-    panel.classList.toggle('hidden', !state.chatOpen);
+    panel.style.display = state.chatOpen ? 'flex' : 'none';
+    const chevron = document.getElementById('chat-chevron');
+    if (chevron) chevron.style.transform = state.chatOpen ? 'rotate(180deg)' : 'rotate(0deg)';
     if (state.chatOpen) {
         startChatPolling();
+        clearUnreadBadge();
         setTimeout(() => document.getElementById('chat-input')?.focus(), 50);
     } else {
         stopChatPolling();
     }
 }
 
+function clearUnreadBadge() {
+    const badge = document.getElementById('chat-unread');
+    if (badge) { badge.style.display = 'none'; badge.textContent = ''; }
+}
+
+function bumpUnreadBadge() {
+    if (state.chatOpen) return;
+    const badge = document.getElementById('chat-unread');
+    if (!badge) return;
+    const current = parseInt(badge.textContent || '0') + 1;
+    badge.textContent = current > 9 ? '9+' : current;
+    badge.style.display = 'inline-flex';
+}
+
 function startChatPolling() {
     if (state.chatPollTimer) return;
-    loadChatMessages(); // initial load
-    state.chatPollTimer = setInterval(pollChatMessages, 2000);
+    // Prima carica i messaggi esistenti, poi avvia il polling incrementale
+    loadChatMessages().then(() => {
+        if (!state.chatPollTimer) {
+            state.chatPollTimer = setInterval(pollChatMessages, 2000);
+        }
+    });
 }
 
 function stopChatPolling() {
-    clearInterval(state.chatPollTimer);
-    state.chatPollTimer = null;
+    if (state.chatPollTimer) {
+        clearInterval(state.chatPollTimer);
+        state.chatPollTimer = null;
+    }
 }
 
 async function loadChatMessages() {
     if (!state.chatPollUrl) return;
+    chatPolling = true;
     try {
         const res  = await apiFetch(`${state.chatPollUrl}?roid=${state.roid}`, 'GET');
         const data = await res.json();
@@ -572,42 +599,58 @@ async function loadChatMessages() {
             const container = document.getElementById('chat-messages');
             if (!container) return;
             container.innerHTML = '';
+            shownMessageIds.clear();
             data.messages.forEach(m => appendChatMessage(m));
             if (data.last_id) state.chatLastId = data.last_id;
             scrollChatToBottom();
         }
     } catch {}
+    chatPolling = false;
 }
 
 async function pollChatMessages() {
-    if (!state.chatOpen || !state.chatPollUrl) return;
+    if (!state.chatOpen || !state.chatPollUrl || chatPolling) return;
+    chatPolling = true;
     try {
         const url = `${state.chatPollUrl}?roid=${state.roid}&since=${encodeURIComponent(state.chatLastId)}`;
         const res  = await apiFetch(url, 'GET');
         const data = await res.json();
         if (data.success && data.messages.length > 0) {
-            data.messages.forEach(m => appendChatMessage(m));
+            data.messages.forEach(m => { appendChatMessage(m); bumpUnreadBadge(); });
             if (data.last_id) state.chatLastId = data.last_id;
             scrollChatToBottom();
         }
     } catch {}
+    chatPolling = false;
 }
 
 function appendChatMessage(msg) {
     const container = document.getElementById('chat-messages');
     if (!container) return;
+    // Deduplication: skip if already shown
+    const msgId = String(msg.id);
+    if (shownMessageIds.has(msgId)) return;
+    shownMessageIds.add(msgId);
+
     const isMe = parseInt(msg.uid) === state.currentUid;
-    const div = document.createElement('div');
-    div.className = 'flex flex-col ' + (isMe ? 'items-end' : 'items-start');
     const time = formatRelativeTime(msg.createdat);
-    div.innerHTML = `
-        <div class="flex items-baseline gap-1.5 mb-0.5">
-            <span class="text-xs font-semibold ${isMe ? 'text-indigo-400' : 'text-gray-400'}">${sanitize(msg.username)}</span>
-            <span class="text-xs text-gray-600">${sanitize(time)}</span>
-        </div>
-        <div class="max-w-[90%] px-3 py-1.5 rounded-xl text-sm ${isMe ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-200'}">
-            ${sanitize(msg.message)}
-        </div>`;
+    const div = document.createElement('div');
+    div.style.cssText = `display:flex;flex-direction:column;align-items:${isMe ? 'flex-end' : 'flex-start'};`;
+
+    const meta = document.createElement('div');
+    meta.style.cssText = 'display:flex;align-items:baseline;gap:6px;margin-bottom:3px;';
+    if (isMe) {
+        meta.innerHTML = `<span style="font-size:11px;color:#6b7280;">${sanitize(time)}</span><span style="font-size:11px;font-weight:600;color:#818cf8;">${sanitize(msg.username)}</span>`;
+    } else {
+        meta.innerHTML = `<span style="font-size:11px;font-weight:600;color:#d1d5db;">${sanitize(msg.username)}</span><span style="font-size:11px;color:#4b5563;">${sanitize(time)}</span>`;
+    }
+
+    const bubble = document.createElement('div');
+    bubble.style.cssText = `max-width:85%;padding:7px 12px;border-radius:${isMe ? '14px 14px 4px 14px' : '14px 14px 14px 4px'};font-size:13px;line-height:1.4;word-break:break-word;background:${isMe ? '#4f46e5' : '#374151'};color:${isMe ? '#fff' : '#e5e7eb'};`;
+    bubble.textContent = msg.message;
+
+    div.appendChild(meta);
+    div.appendChild(bubble);
     container.appendChild(div);
 }
 
@@ -618,15 +661,28 @@ function scrollChatToBottom() {
 
 async function sendChatMessage() {
     const input = document.getElementById('chat-input');
-    if (!input) return;
+    if (!input || input.disabled) return;
     const message = input.value.trim().slice(0, 100);
     if (!message) return;
     input.value = '';
+    input.disabled = true;
     try {
-        await apiFetch(state.chatSendUrl, 'POST', { roid: state.roid, message });
-        // Immediately poll to show own message
-        await pollChatMessages();
-    } catch {}
+        const res = await apiFetch(state.chatSendUrl, 'POST', { roid: state.roid, message });
+        const data = await res.json();
+        if (!data.success) {
+            console.error('Chat send failed:', data.message);
+            input.value = message;
+        } else {
+            // Reload all messages from DB - no optimistic render
+            await loadChatMessages();
+        }
+    } catch (e) {
+        console.error('Chat send error:', e);
+        input.value = message;
+    } finally {
+        input.disabled = false;
+        input.focus();
+    }
 }
 
 // Allow Enter key in chat input
@@ -735,10 +791,12 @@ async function doCombine(nameA, nameB, x, y) {
         }
         const result = data.result;
         spawnBoardItem(result.name, result.emoji, result.cid, x, y);
-        if (data.new_in_room && !state.sidebarCids.has(result.cid)) addToSidebar(result);
         if (data.first_discovery) {
-            ownDiscoveries.add(result.cid);
+            ownDiscoveries.add(Number(result.cid));
             updateNavDiscoveryCount(1);
+        }
+        if (data.new_in_room && !state.sidebarCids.has(Number(result.cid))) addToSidebar(result);
+        if (data.first_discovery) {
             showToast(`🏆 First world discovery: ${result.emoji} ${result.name}!`, 'first');
         } else if (data.new_in_room) {
             showToast(`✨ New element: ${result.emoji} ${result.name}`, 'success');
@@ -776,8 +834,8 @@ async function persistCombination(nameA, nameB, result) {
         const data = await res.json();
         if (data.success && data.result) {
             const r = data.result;
-            if (!state.sidebarCids.has(r.cid)) addToSidebar(r);
-            if (data.first_discovery) { ownDiscoveries.add(r.cid); updateNavDiscoveryCount(1); }
+            if (data.first_discovery) { ownDiscoveries.add(Number(r.cid)); updateNavDiscoveryCount(1); }
+            if (!state.sidebarCids.has(Number(r.cid))) addToSidebar(r);
         }
     } catch {}
 }

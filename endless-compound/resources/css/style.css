@@ -236,3 +236,43 @@ html.light-theme #tree-modal > div {
     background-color: #ffffff !important;
     border-color: #e2e8f0 !important;
 }
+
+/* ── Chat panel ───────────────────────────────────────────────── */
+#chat-panel {
+    filter: drop-shadow(0 -4px 24px rgba(0,0,0,0.5));
+}
+
+#chat-messages {
+    scroll-behavior: smooth;
+}
+
+/* Scrollbar sottile per la chat */
+#chat-messages::-webkit-scrollbar { width: 4px; }
+#chat-messages::-webkit-scrollbar-track { background: transparent; }
+#chat-messages::-webkit-scrollbar-thumb { background: #374151; border-radius: 2px; }
+
+/* ── Tree SVG ─────────────────────────────────────────────────── */
+#tree-content svg {
+    display: block;
+    background: transparent;
+}
+
+#tree-content svg text {
+    pointer-events: none;
+    user-select: none;
+}
+
+/* Scrollbar sottile per il tree */
+#tree-content::-webkit-scrollbar { width: 6px; height: 6px; }
+#tree-content::-webkit-scrollbar-track { background: transparent; }
+#tree-content::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+
+html.light-theme #chat-panel > div {
+    background-color: #ffffff !important;
+    border-color: #e2e8f0 !important;
+}
+
+html.light-theme #chat-messages > div > div:last-child.bg-gray-700\/80 {
+    background-color: #f1f5f9 !important;
+    color: #1e293b !important;
+}
