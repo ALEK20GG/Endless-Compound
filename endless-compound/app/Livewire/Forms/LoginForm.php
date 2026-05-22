@@ -4,8 +4,11 @@ namespace App\Livewire\Forms;
 
 use Illuminate\Auth\Events\Lockout;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Validate;
@@ -21,6 +24,9 @@ class LoginForm extends Form
 
     #[Validate('boolean')]
     public bool $remember = false;
+
+    /** Set to true after credentials are verified, to signal 2FA is needed */
+    public bool $requiresTwoFactor = false;
 
     /**
      * Attempt to authenticate the request's credentials.
@@ -45,6 +51,29 @@ class LoginForm extends Form
         ]);
 
         RateLimiter::clear($this->throttleKey());
+
+        // ── 2FA via email ────────────────────────────────────────
+        // Salva l'utente in sessione come "pending 2FA" e invia OTP.
+        // Il login viene completato solo dopo la verifica del codice.
+        $userId = Auth::id();
+        Auth::logout(); // log out temporaneamente
+
+        Session::put('2fa_user_id', $userId);
+        Session::put('2fa_remember', $this->remember);
+
+        // Genera e invia OTP
+        $otp = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        Cache::put("2fa_otp:{$userId}", $otp, 600);
+
+        $user = \App\Models\User::find($userId);
+        try {
+            Mail::to($user->email)->send(new \App\Mail\TwoFactorMail($user->username, $otp));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('2FA mail failed', ['error' => $e->getMessage()]);
+        }
+
+        // Signal to the Livewire component that 2FA redirect is needed
+        $this->requiresTwoFactor = true;
     }
 
     /**

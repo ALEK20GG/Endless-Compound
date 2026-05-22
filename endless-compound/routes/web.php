@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Auth;
 use App\Http\Controllers\GameController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\Auth\GoogleAuthController;
+use App\Http\Controllers\Auth\TwoFactorController;
 
 // Logout esplicito
 Route::post('/logout', function () {
@@ -59,6 +60,11 @@ Route::middleware('auth')->group(function () {
 // Google OAuth — definite QUI così la route 'auth.google' esiste sempre
 Route::get('/auth/google', [GoogleAuthController::class, 'redirectToGoogle'])->name('auth.google');
 Route::get('/auth/google/callback', [GoogleAuthController::class, 'handleGoogleCallback'])->name('auth.google.callback');
+
+// 2FA routes
+Route::get('/auth/two-factor', [TwoFactorController::class, 'show'])->name('2fa.show');
+Route::post('/auth/two-factor/send', [TwoFactorController::class, 'send'])->name('2fa.send');
+Route::post('/auth/two-factor/verify', [TwoFactorController::class, 'verify'])->name('2fa.verify');
 
 require __DIR__.'/auth.php';
 
