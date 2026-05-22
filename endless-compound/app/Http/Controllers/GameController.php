@@ -106,22 +106,45 @@ class GameController extends Controller
             return back()->withErrors(['code' => 'Room not found.']);
         }
 
-        // Conta i player attuali
-        $currentPlayers = DB::table('collabs_in')->where('roid', $room->roid)->count();
-        if ($currentPlayers >= $room->maxplayers) {
-            return back()->withErrors(['code' => 'Room is full.']);
-        }
+        try {
+            DB::transaction(function () use ($uid, $room) {
+                // ── FOR UPDATE sulla room ────────────────────────────────
+                // Blocca la riga della room per tutta la transazione.
+                // Impedisce che due player entrino simultaneamente in una
+                // room quasi piena, superando il limite di maxplayers.
+                $lockedRoom = DB::table('rooms')
+                    ->where('roid', $room->roid)
+                    ->lockForUpdate()
+                    ->first();
 
-        // Aggiungi a collabs_in se non già presente
-        $alreadyIn = DB::table('collabs_in')
-            ->where('uid', $uid)->where('roid', $room->roid)->exists();
+                // Conta i player attuali con lock condiviso (FOR SHARE):
+                // leggiamo il conteggio in modo sicuro senza bloccare altre letture
+                $currentPlayers = DB::table('collabs_in')
+                    ->where('roid', $room->roid)
+                    ->sharedLock()
+                    ->count();
 
-        if (! $alreadyIn) {
-            DB::table('collabs_in')->insert([
-                'uid'      => $uid,
-                'roid'     => $room->roid,
-                'joinedat' => now(),
-            ]);
+                if ($currentPlayers >= $lockedRoom->maxplayers) {
+                    throw new \Exception('Room is full.');
+                }
+
+                // Verifica se già presente (con lock esclusivo)
+                $alreadyIn = DB::table('collabs_in')
+                    ->where('uid', $uid)
+                    ->where('roid', $room->roid)
+                    ->lockForUpdate()
+                    ->exists();
+
+                if (! $alreadyIn) {
+                    DB::table('collabs_in')->insert([
+                        'uid'      => $uid,
+                        'roid'     => $room->roid,
+                        'joinedat' => now(),
+                    ]);
+                }
+            });
+        } catch (\Exception $e) {
+            return back()->withErrors(['code' => $e->getMessage()]);
         }
 
         $this->ensureBaseElements($room->roid);
@@ -386,8 +409,33 @@ class GameController extends Controller
     {
         try {
             $result = DB::transaction(function () use ($cidA, $cidB, $generated, $roid, $uid) {
+
+                // ── LOCK sulla ricetta (FOR UPDATE) ──────────────────────
+                // Impedisce che due richieste concorrenti creino la stessa
+                // ricetta contemporaneamente (race condition).
+                // Se la ricetta esiste già, la leggiamo con lock esclusivo.
+                $existingRecipe = DB::table('recipes')
+                    ->where('cid_a', $cidA)
+                    ->where('cid_b', $cidB)
+                    ->lockForUpdate()   // FOR UPDATE: nessun altro può modificare
+                    ->first();
+
+                if ($existingRecipe) {
+                    // Ricetta già creata da un'altra transazione concorrente
+                    $resultCompound = DB::table('compounds')
+                        ->where('cid', $existingRecipe->cid_result)
+                        ->first();
+                    $this->addToRoom($roid, $resultCompound->cid);
+                    return ['compound' => $resultCompound, 'is_first_discovery' => false];
+                }
+
+                // ── LOCK sul compound per nome (FOR SHARE) ───────────────
+                // Leggiamo il compound esistente con lock condiviso:
+                // altri possono leggerlo ma nessuno può modificarlo/eliminarlo
+                // mentre decidiamo se crearne uno nuovo.
                 $existing = DB::table('compounds')
                     ->whereRaw('LOWER(name) = ?', [strtolower($generated['name'])])
+                    ->sharedLock()     // FOR SHARE: lettura protetta
                     ->first();
 
                 $isFirstDiscovery = false;
@@ -395,6 +443,9 @@ class GameController extends Controller
                 if ($existing) {
                     $resultCompound = $existing;
                 } else {
+                    // Nessun compound con questo nome — creiamo il nuovo.
+                    // Il lock sulla ricetta (FOR UPDATE sopra) garantisce
+                    // che solo questa transazione arrivi qui per questa coppia.
                     $newCid = DB::table('compounds')->insertGetId([
                         'name'                 => $generated['name'],
                         'emoji'                => $generated['emoji'],
@@ -405,17 +456,13 @@ class GameController extends Controller
                     $isFirstDiscovery = true;
                 }
 
-                $recipeExists = DB::table('recipes')
-                    ->where('cid_a', $cidA)->where('cid_b', $cidB)->exists();
-
-                if (! $recipeExists) {
-                    DB::table('recipes')->insert([
-                        'cid_a'      => $cidA,
-                        'cid_b'      => $cidB,
-                        'cid_result' => $resultCompound->cid,
-                        'createdat'  => now(),
-                    ]);
-                }
+                // Salva la ricetta (siamo dentro la transazione con FOR UPDATE)
+                DB::table('recipes')->insert([
+                    'cid_a'      => $cidA,
+                    'cid_b'      => $cidB,
+                    'cid_result' => $resultCompound->cid,
+                    'createdat'  => now(),
+                ]);
 
                 $this->addToRoom($roid, $resultCompound->cid);
 
@@ -441,8 +488,15 @@ class GameController extends Controller
 
     private function addToRoom(int $roid, int $cid): bool
     {
+        // Deve essere chiamato dentro una transazione attiva.
+        // FOR UPDATE: blocca la riga (o l'assenza di riga) per evitare
+        // che due sessioni concorrenti inseriscano lo stesso compound
+        // nella stessa room contemporaneamente.
         $exists = DB::table('room_comps')
-            ->where('roid', $roid)->where('cid', $cid)->exists();
+            ->where('roid', $roid)
+            ->where('cid', $cid)
+            ->lockForUpdate()
+            ->exists();
 
         if (! $exists) {
             DB::table('room_comps')->insert([
@@ -463,9 +517,12 @@ class GameController extends Controller
             ->whereRaw("LOWER(name) IN ({$placeholders})", self::BASE_ELEMENTS)
             ->pluck('cid');
 
-        foreach ($baseElements as $cid) {
-            $this->addToRoom($roid, $cid);
-        }
+        // Transazione per garantire atomicità del seed iniziale
+        DB::transaction(function () use ($roid, $baseElements) {
+            foreach ($baseElements as $cid) {
+                $this->addToRoom($roid, $cid);
+            }
+        });
     }
 
     private function ensureBaseElements(int $roid): void
