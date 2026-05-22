@@ -68,6 +68,29 @@ if (app()->environment('local', 'production')) {
             . 'php_version: ' . PHP_VERSION . '</pre>');
     });
 
+    Route::get('/debug-error', function () {
+        try {
+            // Test basic DB
+            DB::connection()->getPdo();
+            $compounds = DB::table('compounds')->count();
+            // Test auth
+            $uid = auth()->id();
+            // Test routes
+            $routes = collect(Route::getRoutes())->map(fn($r) => $r->getName())->filter()->values();
+            return response()->json([
+                'status'    => 'ok',
+                'db'        => "connected, {$compounds} compounds",
+                'auth'      => $uid ? "logged in as {$uid}" : 'guest',
+                'php'       => PHP_VERSION,
+                'laravel'   => app()->version(),
+                'socialite' => class_exists(\Laravel\Socialite\Facades\Socialite::class) ? 'installed' : 'MISSING',
+                'profile_controller' => class_exists(\App\Http\Controllers\ProfileController::class) ? 'found' : 'MISSING',
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()], 500);
+        }
+    });
+
     Route::get('/dbcheck', function () {
         $results = [];
 

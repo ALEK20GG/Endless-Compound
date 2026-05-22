@@ -11,7 +11,7 @@ use App\Services\LlamaCombinationService;
 class GameController extends Controller
 {
     // Base element names (case-insensitive) — includes both 'wind' and 'air' for compatibility
-    private const BASE_ELEMENTS = ['water', 'fire', 'earth', 'wind', 'air'];
+    private const BASE_ELEMENTS = ['water', 'fire', 'earth', 'air'];
 
     public function __construct(
         private readonly LlamaCombinationService $llama
@@ -372,8 +372,10 @@ class GameController extends Controller
 
     private function seedRoomWithBaseElements(int $roid): void
     {
+        $placeholders = implode(',', array_fill(0, count(self::BASE_ELEMENTS), '?'));
+
         $baseElements = DB::table('compounds')
-            ->whereRaw('LOWER(name) IN (?, ?, ?, ?)', self::BASE_ELEMENTS)
+            ->whereRaw("LOWER(name) IN ({$placeholders})", self::BASE_ELEMENTS)
             ->pluck('cid');
 
         foreach ($baseElements as $cid) {

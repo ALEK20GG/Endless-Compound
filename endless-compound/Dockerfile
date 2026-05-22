@@ -20,8 +20,7 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 WORKDIR /var/www/html
 COPY . .
 
-# Installa dipendenze PHP (incluso Socialite)
-RUN composer require laravel/socialite --no-interaction --no-update
+# Installa dipendenze PHP
 RUN composer install --optimize-autoloader --no-dev
 
 # Installa dipendenze JS e builda gli asset Vite
