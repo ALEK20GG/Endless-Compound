@@ -61,6 +61,7 @@
           data-roid="{{ $room->roid }}"
           data-multiplayer="{{ $isMultiplayer ? 'true' : 'false' }}"
           data-uid="{{ auth()->id() }}"
+          data-local-ai="{{ app()->isLocal() ? 'true' : 'false' }}"
           data-my-discoveries='@json($myDiscoveries)'
           data-base-elements='@json($roomElements)'>
 

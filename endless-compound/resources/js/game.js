@@ -30,11 +30,11 @@ document.addEventListener('DOMContentLoaded', () => {
     state.isMultiplayer = board.dataset.multiplayer === 'true';
     state.currentUid    = parseInt(board.dataset.uid ?? '0', 10);
 
-    // Popola le scoperte del player corrente dal PHP inline
     const myDisc = safeParseJson(board.dataset.myDiscoveries) ?? [];
     myDisc.forEach(cid => ownDiscoveries.add(Number(cid)));
     loadElements();
-    localAI.init();
+    // Only use local AI in local dev — on production use server only
+    if (board.dataset.localAi === 'true') localAI.init();
     initBoardDrop(board);
     initSidebarDrop();
     if (state.isMultiplayer) setInterval(pollNewElements, 3000);
