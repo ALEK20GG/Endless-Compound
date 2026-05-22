@@ -76,6 +76,30 @@ if (app()->environment('local', 'production')) {
             . 'php_version: ' . PHP_VERSION . '</pre>');
     });
 
+    Route::get('/debug-mail', function () {
+        try {
+            \Illuminate\Support\Facades\Mail::raw('Test mail from Endless Compound - ' . now(), function ($msg) {
+                $msg->to(request()->query('to', 'test@example.com'))
+                    ->subject('Mail Test');
+            });
+            return response()->json([
+                'status' => 'ok',
+                'mailer' => config('mail.default'),
+                'host'   => config('mail.mailers.smtp.host'),
+                'port'   => config('mail.mailers.smtp.port'),
+                'from'   => config('mail.from.address'),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => $e->getMessage(),
+                'mailer'  => config('mail.default'),
+                'host'    => config('mail.mailers.smtp.host'),
+                'port'    => config('mail.mailers.smtp.port'),
+            ], 500);
+        }
+    });
+
     Route::get('/debug-error', function () {
         try {
             // Test basic DB
