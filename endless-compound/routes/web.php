@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use App\Http\Controllers\GameController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 
 // Logout esplicito
@@ -45,6 +46,13 @@ Route::get('/game/{roid}', [GameController::class, 'index'])
     ->middleware('auth')
     ->whereNumber('roid')
     ->name('game.room');
+
+// Profilo utente
+Route::middleware('auth')->group(function () {
+    Route::get('/profile', [ProfileController::class, 'show'])->name('profile');
+    Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::delete('/profile/room/{roid}', [ProfileController::class, 'leaveRoom'])->name('profile.room.leave');
+});
 
 // Google OAuth — definite QUI così la route 'auth.google' esiste sempre
 Route::get('/auth/google', [GoogleAuthController::class, 'redirectToGoogle'])->name('auth.google');

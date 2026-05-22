@@ -13,6 +13,7 @@
         <a href="{{ route('home') }}" class="text-lg font-bold text-indigo-400 tracking-wide">⚗️ Endless Compound</a>
         <div class="flex items-center gap-4 text-sm">
             <span class="text-gray-400">{{ auth()->user()->username }}</span>
+            <a href="{{ route('profile') }}" class="text-gray-500 hover:text-white transition">Profile</a>
             <form method="POST" action="{{ route('logout') }}">
                 @csrf
                 <button class="text-gray-500 hover:text-white transition">Log out</button>

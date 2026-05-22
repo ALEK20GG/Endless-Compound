@@ -103,12 +103,13 @@ class LlamaCombinationService
         'meta-llama/llama-3.3-70b-instruct:free',
     ];
 
-    private function callWithRetry(string $prompt, int $maxAttempts = 3): ?\Illuminate\Http\Client\Response
+    private function callWithRetry(string $prompt, int $maxAttempts = 2): ?\Illuminate\Http\Client\Response
     {
         // Build model list: configured model first, then fallbacks (deduped)
         $models = array_unique(array_merge([$this->model], $this->fallbackModels));
 
-        // Try each model; if all are rate-limited, wait and retry the primary
+        // On Render, keep total time under 25s to avoid request timeout
+        // Each model gets max 20s, only 1 retry round
         for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
             foreach ($models as $model) {
                 $response = Http::withToken($this->apiKey)
@@ -116,7 +117,7 @@ class LlamaCombinationService
                         'HTTP-Referer' => config('app.url'),
                         'X-Title'      => config('app.name'),
                     ])
-                    ->timeout(90)
+                    ->timeout(20)
                     ->post($this->endpoint, [
                         'model'       => $model,
                         'messages'    => [
@@ -132,7 +133,6 @@ class LlamaCombinationService
                 }
 
                 if ($response->status() === 429) {
-                    // Rate limited — try next model immediately
                     Log::warning('LlamaCombinationService: rate limited, trying next model', [
                         'model'   => $model,
                         'attempt' => $attempt,
@@ -147,12 +147,10 @@ class LlamaCombinationService
                 ]);
             }
 
-            // All models rate-limited or unavailable — wait before next round
+            // All models rate-limited — short wait before retry
             if ($attempt < $maxAttempts - 1) {
-                $wait = 15;
-                Log::warning("LlamaCombinationService: all models busy, waiting {$wait}s before retry", [
-                    'attempt' => $attempt + 1,
-                ]);
+                $wait = 5;
+                Log::warning("LlamaCombinationService: all models busy, waiting {$wait}s before retry");
                 sleep($wait);
             }
         }

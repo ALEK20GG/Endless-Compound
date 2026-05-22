@@ -20,6 +20,7 @@
             <span class="text-gray-500 text-xs">{{ $players->count() }}/{{ $room->maxplayers }} players</span>
         @endif
         <span class="text-gray-400">{{ auth()->user()->username }}</span>
+        <a href="{{ route('profile') }}" class="text-gray-500 hover:text-white transition text-xs">Profile</a>
         <button onclick="document.getElementById('logout-form').submit()"
                 class="text-gray-500 hover:text-white transition">Log out</button>
     </div>

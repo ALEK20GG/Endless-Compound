@@ -10,8 +10,8 @@ use App\Services\LlamaCombinationService;
 
 class GameController extends Controller
 {
-    // Base element names (case-insensitive)
-    private const BASE_ELEMENTS = ['water', 'fire', 'earth', 'wind'];
+    // Base element names (case-insensitive) — includes both 'wind' and 'air' for compatibility
+    private const BASE_ELEMENTS = ['water', 'fire', 'earth', 'wind', 'air'];
 
     public function __construct(
         private readonly LlamaCombinationService $llama
