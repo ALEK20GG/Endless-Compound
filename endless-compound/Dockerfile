@@ -30,8 +30,13 @@ RUN (npm ci || npm install) && npm run build
 RUN sed -i 's|/var/www/html|/var/www/html/public|g' /etc/apache2/sites-available/000-default.conf \
     && a2enmod rewrite
 
-# Aumenta timeout Apache per le chiamate LLM lunghe
-RUN echo "Timeout 300" >> /etc/apache2/apache2.conf
+# Aumenta timeout Apache
+RUN echo "Timeout 300" >> /etc/apache2/apache2.conf \
+    && echo "ServerName localhost" >> /etc/apache2/apache2.conf
+
+# Aumenta timeout PHP per le chiamate LLM
+RUN echo "max_execution_time = 300" >> /usr/local/etc/php/conf.d/custom.ini \
+    && echo "max_input_time = 300" >> /usr/local/etc/php/conf.d/custom.ini
 
 # Script di avvio
 COPY start.sh /start.sh
