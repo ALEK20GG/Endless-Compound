@@ -188,3 +188,51 @@ html.light-theme #sidebar-search {
 html.light-theme #board-hint p {
     color: #94a3b8;
 }
+
+/* ── Board canvas (zoom/pan wrapper) ──────────────────────────── */
+#board-canvas {
+    transform-origin: 0 0;
+    will-change: transform;
+}
+
+/* ── Chat panel ───────────────────────────────────────────────── */
+#chat-panel {
+    display: flex;
+    flex-direction: column;
+}
+
+#chat-messages {
+    scrollbar-width: thin;
+    scrollbar-color: #374151 transparent;
+}
+
+#chat-messages::-webkit-scrollbar {
+    width: 4px;
+}
+
+#chat-messages::-webkit-scrollbar-thumb {
+    background: #374151;
+    border-radius: 2px;
+}
+
+/* ── Tree modal ───────────────────────────────────────────────── */
+#tree-content {
+    scrollbar-width: thin;
+    scrollbar-color: #374151 transparent;
+}
+
+/* ── Light theme additions ────────────────────────────────────── */
+html.light-theme #chat-panel {
+    background-color: #ffffff !important;
+    border-color: #e2e8f0 !important;
+}
+
+html.light-theme #chat-messages .bg-gray-800 {
+    background-color: #f1f5f9 !important;
+    color: #1e293b !important;
+}
+
+html.light-theme #tree-modal > div {
+    background-color: #ffffff !important;
+    border-color: #e2e8f0 !important;
+}

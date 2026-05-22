@@ -1,5 +1,6 @@
-/**
+﻿/**
  * Endless Compound — game frontend
+ * Features: board items, combine, zoom/pan, chat, localStorage positions, discovery notifications
  */
 
 // ── State ────────────────────────────────────────────────────────
@@ -9,16 +10,34 @@ const state = {
     combineUrl:       '',
     elementsUrl:      '',
     pollUrl:          '',
+    chatSendUrl:      '',
+    chatPollUrl:      '',
     roid:             0,
     isMultiplayer:    false,
     lastUpdated:      null,
     currentUid:       0,
+    currentUsername:  '',
     nextId:           1,
     combining:        false,
     sidebarDragGhost: null,
     // Touch state
-    touchDrag:        null,   // { id, el, offX, offY, fromSidebar, name, emoji, cid }
-    touchClone:       null,   // visual clone following finger
+    touchDrag:        null,
+    touchClone:       null,
+    // Zoom/pan state
+    zoom:             1,
+    panX:             0,
+    panY:             0,
+    isPanning:        false,
+    panStartX:        0,
+    panStartY:        0,
+    panStartPanX:     0,
+    panStartPanY:     0,
+    // Chat state
+    chatOpen:         false,
+    chatLastId:       0,
+    chatPollTimer:    null,
+    // Position save debounce
+    positionSaveTimer: null,
 };
 const ownDiscoveries = new Set();
 
@@ -26,20 +45,28 @@ const ownDiscoveries = new Set();
 document.addEventListener('DOMContentLoaded', () => {
     const board = document.getElementById('board');
     if (!board) return;
-    state.combineUrl    = board.dataset.combineUrl;
-    state.elementsUrl   = board.dataset.elementsUrl;
-    state.pollUrl       = board.dataset.pollUrl ?? '';
-    state.roid          = parseInt(board.dataset.roid, 10);
-    state.isMultiplayer = board.dataset.multiplayer === 'true';
-    state.currentUid    = parseInt(board.dataset.uid ?? '0', 10);
+    state.combineUrl     = board.dataset.combineUrl;
+    state.elementsUrl    = board.dataset.elementsUrl;
+    state.pollUrl        = board.dataset.pollUrl ?? '';
+    state.chatSendUrl    = board.dataset.chatSendUrl ?? '';
+    state.chatPollUrl    = board.dataset.chatPollUrl ?? '';
+    state.roid           = parseInt(board.dataset.roid, 10);
+    state.isMultiplayer  = board.dataset.multiplayer === 'true';
+    state.currentUid     = parseInt(board.dataset.uid ?? '0', 10);
+    state.currentUsername = board.dataset.username ?? '';
 
     const myDisc = safeParseJson(board.dataset.myDiscoveries) ?? [];
     myDisc.forEach(cid => ownDiscoveries.add(Number(cid)));
-    loadElements();
+
+    loadElements().then(() => restoreBoardPositions());
+
     if (board.dataset.localAi === 'true') localAI.init();
     initBoardDrop(board);
     initSidebarDrop();
     initTouchHandlers();
+    initZoomPan(board);
+    initKeyboardShortcuts();
+
     if (state.isMultiplayer) setInterval(pollNewElements, 3000);
 });
 
@@ -58,7 +85,13 @@ async function pollNewElements() {
         const res  = await apiFetch(`${state.elementsUrl}?roid=${state.roid}&since=${encodeURIComponent(state.lastUpdated)}`, 'GET');
         const data = await res.json();
         if (data.success && data.elements.length > 0) {
-            data.elements.forEach(el => { if (!state.sidebarCids.has(el.cid)) addToSidebar(el); });
+            data.elements.forEach(el => {
+                if (!state.sidebarCids.has(el.cid)) addToSidebar(el);
+                // Notifica scoperta da altro giocatore
+                if (el.discoverer_username && el.discoverer_username !== state.currentUsername) {
+                    showToast(`🔬 ${sanitize(el.discoverer_username)} discovered ${sanitize(el.emoji ?? '✨')} ${sanitize(el.name)}!`, 'info');
+                }
+            });
             state.lastUpdated = data.last_updated;
         }
     } catch { /* silent */ }
@@ -139,6 +172,83 @@ function addToSidebar(el) {
     count.textContent = state.sidebarCids.size;
 }
 
+// ── Zoom / Pan ────────────────────────────────────────────────────
+function getCanvas() { return document.getElementById('board-canvas'); }
+
+function applyTransform() {
+    const canvas = getCanvas();
+    if (!canvas) return;
+    canvas.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+    const btn = document.getElementById('reset-zoom-btn');
+    if (btn) btn.classList.toggle('hidden', state.zoom === 1 && state.panX === 0 && state.panY === 0);
+}
+
+function resetZoom() {
+    state.zoom = 1; state.panX = 0; state.panY = 0;
+    applyTransform();
+}
+
+function initZoomPan(board) {
+    // Scroll → zoom
+    board.addEventListener('wheel', e => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        const newZoom = Math.min(2, Math.max(0.5, state.zoom + delta));
+        // Zoom toward cursor
+        const rect = board.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const scale = newZoom / state.zoom;
+        state.panX = mx - scale * (mx - state.panX);
+        state.panY = my - scale * (my - state.panY);
+        state.zoom = newZoom;
+        applyTransform();
+    }, { passive: false });
+
+    // Middle-click or empty-area drag → pan
+    board.addEventListener('mousedown', e => {
+        // Only pan on middle button or when clicking the board/canvas directly (not a board-item)
+        const isMiddle = e.button === 1;
+        const isEmptyArea = e.target === board || e.target === getCanvas();
+        if (!isMiddle && !isEmptyArea) return;
+        e.preventDefault();
+        state.isPanning   = true;
+        state.panStartX   = e.clientX;
+        state.panStartY   = e.clientY;
+        state.panStartPanX = state.panX;
+        state.panStartPanY = state.panY;
+        board.style.cursor = 'grabbing';
+    });
+
+    document.addEventListener('mousemove', e => {
+        if (!state.isPanning) return;
+        state.panX = state.panStartPanX + (e.clientX - state.panStartX);
+        state.panY = state.panStartPanY + (e.clientY - state.panStartY);
+        applyTransform();
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (state.isPanning) {
+            state.isPanning = false;
+            const board = document.getElementById('board');
+            if (board) board.style.cursor = '';
+        }
+    });
+}
+
+// Convert board-relative coords accounting for zoom/pan
+function boardCoordsFromClient(clientX, clientY) {
+    const board = document.getElementById('board');
+    const rect  = board.getBoundingClientRect();
+    const bx = clientX - rect.left;
+    const by = clientY - rect.top;
+    // Inverse of: screenPos = panOffset + zoom * canvasPos
+    return {
+        x: (bx - state.panX) / state.zoom,
+        y: (by - state.panY) / state.zoom,
+    };
+}
+
 // ── Board drop ────────────────────────────────────────────────────
 function initBoardDrop(board) {
     board.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
@@ -146,14 +256,14 @@ function initBoardDrop(board) {
         e.preventDefault();
         const payload = safeParseJson(e.dataTransfer.getData('application/x-element'));
         if (!payload) return;
-        const rect = board.getBoundingClientRect();
-        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        const { x, y } = boardCoordsFromClient(e.clientX, e.clientY);
         if (payload.from === 'board') {
             const item = state.boardItems.get(payload.id);
             if (item) {
                 item.el.style.left = `${x - 50}px`;
                 item.el.style.top  = `${y - 18}px`;
                 if (state.sidebarDragGhost === payload.id) state.sidebarDragGhost = null;
+                scheduleSavePositions();
             }
         }
     });
@@ -209,10 +319,9 @@ function onTouchMove(e) {
     if (state.touchDrag.id) {
         const item = state.boardItems.get(state.touchDrag.id);
         if (item) {
-            const board = document.getElementById('board');
-            const bRect = board.getBoundingClientRect();
-            item.el.style.left = `${touch.clientX - bRect.left - state.touchDrag.offX}px`;
-            item.el.style.top  = `${touch.clientY - bRect.top  - state.touchDrag.offY}px`;
+            const { x, y } = boardCoordsFromClient(touch.clientX, touch.clientY);
+            item.el.style.left = `${x - state.touchDrag.offX}px`;
+            item.el.style.top  = `${y - state.touchDrag.offY}px`;
         }
     }
 }
@@ -230,12 +339,14 @@ function onTouchEnd(e) {
         state.touchDrag = null;
         return;
     }
-    const dropX = touch.clientX - bRect.left;
-    const dropY = touch.clientY - bRect.top;
+    const { x: dropX, y: dropY } = boardCoordsFromClient(touch.clientX, touch.clientY);
     const targetEntry = findBoardItemAtClient(touch.clientX, touch.clientY, state.touchDrag.id);
     if (targetEntry) {
-        const cx = targetEntry.el.getBoundingClientRect().left - bRect.left + targetEntry.el.offsetWidth / 2;
-        const cy = targetEntry.el.getBoundingClientRect().top  - bRect.top  + targetEntry.el.offsetHeight / 2;
+        const board = document.getElementById('board');
+        const bRect = board.getBoundingClientRect();
+        const eRect = targetEntry.el.getBoundingClientRect();
+        const cx = (eRect.left - bRect.left - state.panX) / state.zoom + eRect.width / (2 * state.zoom);
+        const cy = (eRect.top  - bRect.top  - state.panY) / state.zoom + eRect.height / (2 * state.zoom);
         if (state.touchDrag.id) removeBoardItem(state.touchDrag.id);
         targetEntry.el.classList.add('merging');
         const dragName = state.touchDrag.name;
@@ -248,6 +359,7 @@ function onTouchEnd(e) {
             const item = state.boardItems.get(state.touchDrag.id);
             if (item) { item.el.style.left = `${dropX - 50}px`; item.el.style.top = `${dropY - 18}px`; }
         }
+        scheduleSavePositions();
     }
     state.touchDrag = null;
 }
@@ -292,11 +404,19 @@ function spawnBoardItem(name, emoji, cid, x, y, animate = true) {
         el.classList.remove('dragging');
         const board = document.getElementById('board');
         const bRect = board.getBoundingClientRect();
-        const nx = e.clientX - bRect.left - dragOffX + 50;
-        const ny = e.clientY - bRect.top  - dragOffY + 18;
-        if (nx > 0 && ny > 0 && nx < bRect.width && ny < bRect.height) {
+        // Convert screen coords back to canvas coords
+        const screenX = e.clientX - bRect.left;
+        const screenY = e.clientY - bRect.top;
+        const canvasX = (screenX - state.panX) / state.zoom;
+        const canvasY = (screenY - state.panY) / state.zoom;
+        const offXCanvas = dragOffX / state.zoom;
+        const offYCanvas = dragOffY / state.zoom;
+        const nx = canvasX - offXCanvas + 50;
+        const ny = canvasY - offYCanvas + 18;
+        if (nx > -200 && ny > -200 && nx < bRect.width / state.zoom + 200 && ny < bRect.height / state.zoom + 200) {
             el.style.left = `${nx - 50}px`; el.style.top = `${ny - 18}px`;
         }
+        scheduleSavePositions();
     });
     el.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; });
     el.addEventListener('drop', async e => {
@@ -307,8 +427,9 @@ function spawnBoardItem(name, emoji, cid, x, y, animate = true) {
         const board = document.getElementById('board');
         const bRect = board.getBoundingClientRect();
         const eRect = el.getBoundingClientRect();
-        const cx = eRect.left - bRect.left + eRect.width / 2;
-        const cy = eRect.top  - bRect.top  + eRect.height / 2;
+        // Center of target element in canvas coords
+        const cx = (eRect.left - bRect.left - state.panX) / state.zoom + eRect.width / (2 * state.zoom);
+        const cy = (eRect.top  - bRect.top  - state.panY) / state.zoom + eRect.height / (2 * state.zoom);
         if (payload.from === 'board') removeBoardItem(payload.id);
         if (state.sidebarDragGhost === payload.id) state.sidebarDragGhost = null;
         el.classList.add('merging');
@@ -321,20 +442,24 @@ function spawnBoardItem(name, emoji, cid, x, y, animate = true) {
         const board = document.getElementById('board');
         const bRect = board.getBoundingClientRect();
         const eRect = el.getBoundingClientRect();
-        spawnBoardItem(name, emoji, cid, eRect.left - bRect.left + 30, eRect.top - bRect.top + 30);
+        const cx = (eRect.left - bRect.left - state.panX) / state.zoom + eRect.width / (2 * state.zoom);
+        const cy = (eRect.top  - bRect.top  - state.panY) / state.zoom + eRect.height / (2 * state.zoom);
+        spawnBoardItem(name, emoji, cid, cx + 30, cy + 30);
     });
-    el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); removeBoardItem(id); });
+    el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); removeBoardItem(id); scheduleSavePositions(); });
     el.addEventListener('touchstart', e => {
         e.stopPropagation();
         const touch = e.touches[0];
         const r = el.getBoundingClientRect();
-        state.touchDrag = { id, fromSidebar: false, name, emoji, cid, offX: touch.clientX - r.left, offY: touch.clientY - r.top };
+        const offXCanvas = (touch.clientX - r.left) / state.zoom;
+        const offYCanvas = (touch.clientY - r.top)  / state.zoom;
+        state.touchDrag = { id, fromSidebar: false, name, emoji, cid, offX: offXCanvas, offY: offYCanvas };
         createTouchClone(emoji, name, touch.clientX, touch.clientY);
         el.style.opacity = '0.3';
     }, { passive: true });
     el.addEventListener('touchend', () => { el.style.opacity = ''; }, { passive: true });
 
-    document.getElementById('board').appendChild(el);
+    getCanvas().appendChild(el);
     state.boardItems.set(id, { id, name, emoji, cid, el });
     updateBoardHint();
     return id;
@@ -353,7 +478,179 @@ function updateBoardHint() {
 // Esposto per il pulsante "Clear board" nella navbar
 window._clearBoard = function() {
     for (const [id] of [...state.boardItems]) removeBoardItem(id);
+    clearSavedPositions();
 };
+
+// ── localStorage positions ────────────────────────────────────────
+function positionsKey() {
+    return `board_positions_${state.roid}_${state.currentUid}`;
+}
+
+function scheduleSavePositions() {
+    clearTimeout(state.positionSaveTimer);
+    state.positionSaveTimer = setTimeout(savePositions, 500);
+}
+
+function savePositions() {
+    const positions = [];
+    for (const [, item] of state.boardItems) {
+        positions.push({
+            name:  item.name,
+            emoji: item.emoji,
+            cid:   item.cid,
+            x:     parseFloat(item.el.style.left) + 50,
+            y:     parseFloat(item.el.style.top)  + 18,
+        });
+    }
+    try { localStorage.setItem(positionsKey(), JSON.stringify(positions)); } catch {}
+}
+
+function restoreBoardPositions() {
+    try {
+        const raw = localStorage.getItem(positionsKey());
+        if (!raw) return;
+        const positions = JSON.parse(raw);
+        if (!Array.isArray(positions)) return;
+        positions.forEach(p => {
+            if (p.name && p.emoji != null && p.x != null && p.y != null) {
+                spawnBoardItem(p.name, p.emoji, p.cid ?? null, p.x, p.y, false);
+            }
+        });
+    } catch {}
+}
+
+function clearSavedPositions() {
+    try { localStorage.removeItem(positionsKey()); } catch {}
+}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────
+function initKeyboardShortcuts() {
+    document.addEventListener('keydown', e => {
+        // T → toggle chat (multiplayer only)
+        if (e.key === 't' || e.key === 'T') {
+            const active = document.activeElement;
+            const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+            if (!isInput && state.isMultiplayer) {
+                e.preventDefault();
+                toggleChat();
+            }
+        }
+    });
+}
+
+// ── Chat ──────────────────────────────────────────────────────────
+function toggleChat() {
+    const panel = document.getElementById('chat-panel');
+    if (!panel) return;
+    state.chatOpen = !state.chatOpen;
+    panel.classList.toggle('hidden', !state.chatOpen);
+    if (state.chatOpen) {
+        startChatPolling();
+        setTimeout(() => document.getElementById('chat-input')?.focus(), 50);
+    } else {
+        stopChatPolling();
+    }
+}
+
+function startChatPolling() {
+    if (state.chatPollTimer) return;
+    loadChatMessages(); // initial load
+    state.chatPollTimer = setInterval(pollChatMessages, 2000);
+}
+
+function stopChatPolling() {
+    clearInterval(state.chatPollTimer);
+    state.chatPollTimer = null;
+}
+
+async function loadChatMessages() {
+    if (!state.chatPollUrl) return;
+    try {
+        const res  = await apiFetch(`${state.chatPollUrl}?roid=${state.roid}`, 'GET');
+        const data = await res.json();
+        if (data.success) {
+            const container = document.getElementById('chat-messages');
+            if (!container) return;
+            container.innerHTML = '';
+            data.messages.forEach(m => appendChatMessage(m));
+            if (data.last_id) state.chatLastId = data.last_id;
+            scrollChatToBottom();
+        }
+    } catch {}
+}
+
+async function pollChatMessages() {
+    if (!state.chatOpen || !state.chatPollUrl) return;
+    try {
+        const url = `${state.chatPollUrl}?roid=${state.roid}&since=${encodeURIComponent(state.chatLastId)}`;
+        const res  = await apiFetch(url, 'GET');
+        const data = await res.json();
+        if (data.success && data.messages.length > 0) {
+            data.messages.forEach(m => appendChatMessage(m));
+            if (data.last_id) state.chatLastId = data.last_id;
+            scrollChatToBottom();
+        }
+    } catch {}
+}
+
+function appendChatMessage(msg) {
+    const container = document.getElementById('chat-messages');
+    if (!container) return;
+    const isMe = parseInt(msg.uid) === state.currentUid;
+    const div = document.createElement('div');
+    div.className = 'flex flex-col ' + (isMe ? 'items-end' : 'items-start');
+    const time = formatRelativeTime(msg.createdat);
+    div.innerHTML = `
+        <div class="flex items-baseline gap-1.5 mb-0.5">
+            <span class="text-xs font-semibold ${isMe ? 'text-indigo-400' : 'text-gray-400'}">${sanitize(msg.username)}</span>
+            <span class="text-xs text-gray-600">${sanitize(time)}</span>
+        </div>
+        <div class="max-w-[90%] px-3 py-1.5 rounded-xl text-sm ${isMe ? 'bg-indigo-700 text-white' : 'bg-gray-800 text-gray-200'}">
+            ${sanitize(msg.message)}
+        </div>`;
+    container.appendChild(div);
+}
+
+function scrollChatToBottom() {
+    const container = document.getElementById('chat-messages');
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
+async function sendChatMessage() {
+    const input = document.getElementById('chat-input');
+    if (!input) return;
+    const message = input.value.trim().slice(0, 100);
+    if (!message) return;
+    input.value = '';
+    try {
+        await apiFetch(state.chatSendUrl, 'POST', { roid: state.roid, message });
+        // Immediately poll to show own message
+        await pollChatMessages();
+    } catch {}
+}
+
+// Allow Enter key in chat input
+document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('chat-input');
+    if (input) {
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); sendChatMessage(); }
+        });
+    }
+});
+
+function formatRelativeTime(ts) {
+    if (!ts) return '';
+    const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+    if (diff < 60)   return 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+}
+
+// Expose for blade template
+window.toggleChat = toggleChat;
+window.sendChatMessage = sendChatMessage;
 
 // ── Local AI ─────────────────────────────────────────────────────
 const localAI = (() => {
@@ -431,7 +728,6 @@ async function doCombine(nameA, nameB, x, y) {
         }
 
         if (!data.success) {
-            // Messaggio di errore più descrittivo
             const msg = data.message ?? 'Combination failed';
             const isServerDown = msg.toLowerCase().includes('unable') || msg.toLowerCase().includes('503') || res.status >= 500;
             showToast(isServerDown ? '🤖 AI is busy right now. Try again in a moment.' : msg, 'error');
@@ -449,6 +745,7 @@ async function doCombine(nameA, nameB, x, y) {
         } else {
             showToast(`${result.emoji} ${result.name}`, 'success');
         }
+        scheduleSavePositions();
     } catch (e) { console.error('doCombine error:', e); showToast('Network error. Please try again.', 'error'); }
     state.combining = false;
 }
@@ -504,3 +801,6 @@ function getCsrfToken() { return document.querySelector('meta[name="csrf-token"]
 function safeParseJson(v) { try { return JSON.parse(v ?? 'null'); } catch { return null; } }
 function sanitize(str) { return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Expose zoom reset for blade
+window.resetZoom = resetZoom;

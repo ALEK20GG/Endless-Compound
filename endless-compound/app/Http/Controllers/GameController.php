@@ -423,6 +423,7 @@ class GameController extends Controller
     /**
      * GET /game/elements?roid={roid}&since={timestamp}
      * Ritorna gli elementi aggiunti dopo `since` (per il polling multiplayer).
+     * Include discoverer_username per gli elementi nuovi (since fornito).
      */
     public function elements(Request $request): JsonResponse
     {
@@ -451,12 +452,24 @@ class GameController extends Controller
             ->where('room_comps.roid', $roid);
 
         // Se `since` è fornito, ritorna solo i nuovi elementi (per il polling)
+        // e include il discoverer_username per le notifiche
         if ($since) {
-            $query->where('room_comps.addedat', '>', $since);
-        }
+            $query->where('room_comps.addedat', '>', $since)
+                  ->leftJoin('users', 'compounds.first_discoverer_uid', '=', 'users.uid');
 
-        $elements = $query->orderBy('compounds.name')
-            ->get(['compounds.cid', 'compounds.name', 'compounds.emoji', 'room_comps.addedat']);
+            $elements = $query->orderBy('compounds.name')
+                ->get([
+                    'compounds.cid',
+                    'compounds.name',
+                    'compounds.emoji',
+                    'room_comps.addedat',
+                    'users.username as discoverer_username',
+                    'compounds.first_discoverer_uid',
+                ]);
+        } else {
+            $elements = $query->orderBy('compounds.name')
+                ->get(['compounds.cid', 'compounds.name', 'compounds.emoji', 'room_comps.addedat']);
+        }
 
         // Timestamp dell'ultimo elemento per il prossimo poll
         $lastUpdated = DB::table('room_comps')
@@ -467,6 +480,238 @@ class GameController extends Controller
             'success'      => true,
             'elements'     => $elements,
             'last_updated' => $lastUpdated,
+        ]);
+    }
+
+    // ── Chat in-room ─────────────────────────────────────────────
+
+    /**
+     * POST /game/chat
+     * Body: { roid, message }
+     */
+    public function chatSend(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'roid'    => ['required', 'integer'],
+            'message' => ['required', 'string', 'max:100'],
+        ]);
+
+        $uid  = auth()->id();
+        $roid = (int) $data['roid'];
+
+        $room = DB::table('rooms')->where('roid', $roid)->first();
+        if (! $room || $room->maxplayers <= 1) {
+            return response()->json(['success' => false, 'message' => 'Chat only available in multiplayer rooms.'], 403);
+        }
+
+        $hasAccess = ($room->owner_uid == $uid)
+            || DB::table('collabs_in')->where('uid', $uid)->where('roid', $roid)->exists();
+
+        if (! $hasAccess) {
+            return response()->json(['success' => false, 'message' => 'Access denied.'], 403);
+        }
+
+        $message = trim(strip_tags($data['message']));
+        if ($message === '') {
+            return response()->json(['success' => false, 'message' => 'Empty message.'], 422);
+        }
+
+        DB::table('room_messages')->insert([
+            'roid'      => $roid,
+            'uid'       => $uid,
+            'message'   => $message,
+            'createdat' => now(),
+        ]);
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * GET /game/chat?roid=X&since=Y
+     * Ritorna i messaggi della room dopo `since`.
+     */
+    public function chatPoll(Request $request): JsonResponse
+    {
+        $roid  = (int) $request->query('roid', 0);
+        $since = $request->query('since');
+        $uid   = auth()->id();
+
+        if (! $roid) {
+            return response()->json(['success' => false, 'message' => 'Missing roid.'], 422);
+        }
+
+        $room = DB::table('rooms')->where('roid', $roid)->first();
+        if (! $room) {
+            return response()->json(['success' => false, 'message' => 'Room not found.'], 404);
+        }
+
+        $hasAccess = ($room->owner_uid == $uid)
+            || DB::table('collabs_in')->where('uid', $uid)->where('roid', $roid)->exists();
+
+        if (! $hasAccess) {
+            return response()->json(['success' => false, 'message' => 'Access denied.'], 403);
+        }
+
+        $query = DB::table('room_messages')
+            ->join('users', 'room_messages.uid', '=', 'users.uid')
+            ->where('room_messages.roid', $roid);
+
+        if ($since !== null && $since !== '' && (int) $since > 0) {
+            // since is the last message id (integer)
+            $query->where('room_messages.id', '>', (int) $since);
+        } else {
+            // Prima carica: ultimi 50 messaggi
+            $query = DB::table('room_messages')
+                ->join('users', 'room_messages.uid', '=', 'users.uid')
+                ->where('room_messages.roid', $roid)
+                ->orderBy('room_messages.id', 'desc')
+                ->limit(50);
+        }
+
+        $messages = $query->orderBy('room_messages.id', 'asc')
+            ->get([
+                'room_messages.id',
+                'room_messages.uid',
+                'room_messages.message',
+                'room_messages.createdat',
+                'users.username',
+            ]);
+
+        $lastId = $messages->max('id') ?? 0;
+
+        return response()->json([
+            'success'  => true,
+            'messages' => $messages,
+            'last_id'  => $lastId,
+        ]);
+    }
+
+    // ── Discovery tree ────────────────────────────────────────────
+
+    /**
+     * GET /game/{roid}/tree  (AJAX — returns JSON)
+     */
+    public function tree(Request $request, int $roid): JsonResponse
+    {
+        $uid = auth()->id();
+
+        $room = DB::table('rooms')->where('roid', $roid)->first();
+        if (! $room) {
+            return response()->json(['success' => false, 'message' => 'Room not found.'], 404);
+        }
+
+        $hasAccess = ($room->owner_uid == $uid)
+            || DB::table('collabs_in')->where('uid', $uid)->where('roid', $roid)->exists();
+
+        if (! $hasAccess) {
+            return response()->json(['success' => false, 'message' => 'Access denied.'], 403);
+        }
+
+        // Compounds presenti nella room
+        $roomCids = DB::table('room_comps')
+            ->where('roid', $roid)
+            ->pluck('cid')
+            ->toArray();
+
+        if (empty($roomCids)) {
+            return response()->json(['success' => true, 'nodes' => [], 'edges' => []]);
+        }
+
+        // Compounds della room
+        $compounds = DB::table('compounds')
+            ->whereIn('cid', $roomCids)
+            ->get(['cid', 'name', 'emoji'])
+            ->keyBy('cid');
+
+        // Ricette dove il risultato è nella room
+        $recipes = DB::table('recipes')
+            ->whereIn('cid_result', $roomCids)
+            ->get(['cid_a', 'cid_b', 'cid_result']);
+
+        $nodes = $compounds->map(fn($c) => [
+            'cid'   => $c->cid,
+            'name'  => $c->name,
+            'emoji' => $c->emoji ?? '✨',
+        ])->values();
+
+        $edges = $recipes->map(fn($r) => [
+            'a'      => $r->cid_a,
+            'b'      => $r->cid_b,
+            'result' => $r->cid_result,
+        ])->values();
+
+        return response()->json([
+            'success' => true,
+            'nodes'   => $nodes,
+            'edges'   => $edges,
+        ]);
+    }
+
+    // ── Admin ─────────────────────────────────────────────────────
+
+    /**
+     * GET /admin
+     */
+    public function adminPanel(Request $request): \Illuminate\View\View
+    {
+        $stats = [
+            'compounds' => DB::table('compounds')->count(),
+            'recipes'   => DB::table('recipes')->count(),
+            'users'     => DB::table('users')->count(),
+            'rooms'     => DB::table('rooms')->count(),
+        ];
+
+        $compounds = DB::table('compounds')
+            ->leftJoin('users', 'compounds.first_discoverer_uid', '=', 'users.uid')
+            ->select('compounds.cid', 'compounds.name', 'compounds.emoji', 'compounds.discoveredat', 'users.username as discoverer')
+            ->orderByDesc('compounds.cid')
+            ->paginate(20);
+
+        $users = DB::table('users')
+            ->leftJoin('compounds', 'compounds.first_discoverer_uid', '=', 'users.uid')
+            ->select('users.uid', 'users.username', 'users.email', 'users.createdat', 'users.is_admin', DB::raw('COUNT(compounds.cid) as discoveries'))
+            ->groupBy('users.uid', 'users.username', 'users.email', 'users.createdat', 'users.is_admin')
+            ->orderByDesc('discoveries')
+            ->get();
+
+        return view('admin', compact('stats', 'compounds', 'users'));
+    }
+
+    /**
+     * DELETE /admin/compound/{cid}
+     */
+    public function adminDeleteCompound(int $cid): JsonResponse
+    {
+        try {
+            DB::transaction(function () use ($cid) {
+                DB::table('recipes')->where('cid_a', $cid)->orWhere('cid_b', $cid)->orWhere('cid_result', $cid)->delete();
+                DB::table('room_comps')->where('cid', $cid)->delete();
+                DB::table('compounds')->where('cid', $cid)->delete();
+            });
+            return response()->json(['success' => true, 'message' => 'Compound deleted.']);
+        } catch (\Throwable $e) {
+            Log::error('adminDeleteCompound error', ['cid' => $cid, 'error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Error deleting compound.'], 500);
+        }
+    }
+
+    /**
+     * POST /admin/user/{uid}/toggle-admin
+     */
+    public function adminToggleAdmin(int $uid): JsonResponse
+    {
+        $user = DB::table('users')->where('uid', $uid)->first();
+        if (! $user) {
+            return response()->json(['success' => false, 'message' => 'User not found.'], 404);
+        }
+
+        $newValue = ! $user->is_admin;
+        DB::table('users')->where('uid', $uid)->update(['is_admin' => $newValue]);
+
+        return response()->json([
+            'success' => true,
+            'message' => $newValue ? "Admin granted to {$user->username}." : "Admin revoked from {$user->username}.",
+            'is_admin' => $newValue,
         ]);
     }
 

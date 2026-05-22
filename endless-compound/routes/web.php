@@ -42,6 +42,9 @@ Route::middleware('auth')->group(function () {
     Route::post('/game/multiplayer/create', [GameController::class, 'createMultiplayer'])->name('game.multiplayer.create');
     Route::post('/game/multiplayer/join', [GameController::class, 'joinMultiplayer'])->name('game.multiplayer.join');
     Route::post('/game/multiplayer/invite', [GameController::class, 'sendInvite'])->name('game.multiplayer.invite');
+    // Chat
+    Route::post('/game/chat', [GameController::class, 'chatSend'])->name('game.chat.send');
+    Route::get('/game/chat', [GameController::class, 'chatPoll'])->name('game.chat.poll');
 });
 
 // Gioco in una room specifica — DOPO le route statiche
@@ -49,6 +52,28 @@ Route::get('/game/{roid}', [GameController::class, 'index'])
     ->middleware('auth')
     ->whereNumber('roid')
     ->name('game.room');
+
+// Discovery tree (AJAX JSON)
+Route::get('/game/{roid}/tree', [GameController::class, 'tree'])
+    ->middleware('auth')
+    ->whereNumber('roid')
+    ->name('game.tree');
+
+// Admin panel
+Route::middleware(['auth'])->group(function () {
+    Route::get('/admin', function () {
+        if (! auth()->user()->is_admin) abort(403, 'Admin access required.');
+        return app(\App\Http\Controllers\GameController::class)->adminPanel(request());
+    })->name('admin.panel');
+    Route::delete('/admin/compound/{cid}', function (int $cid) {
+        if (! auth()->user()->is_admin) abort(403);
+        return app(\App\Http\Controllers\GameController::class)->adminDeleteCompound($cid);
+    })->name('admin.compound.delete');
+    Route::post('/admin/user/{uid}/toggle-admin', function (int $uid) {
+        if (! auth()->user()->is_admin) abort(403);
+        return app(\App\Http\Controllers\GameController::class)->adminToggleAdmin($uid);
+    })->name('admin.user.toggle');
+});
 
 // Profilo utente
 Route::middleware('auth')->group(function () {
